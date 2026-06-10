@@ -1,0 +1,28 @@
+{
+  "awsCredentialExport": "/Users/shlomi/work/vulcan/claude-code-aws/aws-credential-export.sh dev",
+  "env": {
+    "CLAUDE_CODE_USE_BEDROCK": "1",
+    "AWS_REGION": "us-east-1",
+    "AWS_DEFAULT_REGION": "us-east-1",
+    "ANTHROPIC_MODEL": "us.anthropic.claude-opus-4-6-v1",
+    "ANTHROPIC_SMALL_FAST_MODEL": "us.anthropic.claude-opus-4-6-v1"
+  },
+  "model": "us.anthropic.claude-opus-4-6-v1[1m]",
+  "statusLine": {
+    "type": "command",
+    "command": "/Users/shlomi/.claude/statusline-command.sh"
+  },
+  "enabledPlugins": {
+    "pakka@pakka-marketplace": true
+  },
+  "extraKnownMarketplaces": {
+    "pakka-marketplace": {
+      "source": {
+        "source": "github",
+        "repo": "amargautam/pakka-marketplace"
+      }
+    }
+  },
+  "alwaysThinkingEnabled": true,
+  "theme": "dark"
+}
