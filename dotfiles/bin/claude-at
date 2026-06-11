@@ -19,9 +19,18 @@ if [[ -z "${1:-}" ]]; then
     exit 1
 fi
 
-# Parse path:line
-FILE="${1%:*}"
-LINE="${1##*:}"
+# Parse path:line and optional ?name=
+INPUT="$1"
+URL_NAME=""
+if [[ "$INPUT" == *"?name="* ]]; then
+    URL_NAME="${INPUT##*?name=}"
+    URL_NAME="${URL_NAME//+/ }"
+    URL_NAME="${URL_NAME%%,}"
+    URL_NAME="$(printf '%b' "${URL_NAME//%/\\x}")"
+    INPUT="${INPUT%%\?*}"
+fi
+FILE="${INPUT%:*}"
+LINE="${INPUT##*:}"
 
 if [[ ! -f "$FILE" ]]; then
     echo "File not found: $FILE" >&2
@@ -64,7 +73,7 @@ echo "L1-$LINE of $(basename "$FILE") → $SESSION_ID"
 echo "---"
 
 cd "$WORK_DIR"
-claude --continue
+claude --continue --name "🦀 claude-at ${URL_NAME:-L${LINE}}"
 
 # Restore bootstrap for next use
 mv "$SESSION_FILE.bootstrap" "$SESSION_FILE"

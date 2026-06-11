@@ -44,7 +44,7 @@ Journal pages are named by date: `"Jun 9th, 2026"` (use the ordinal suffix: 1st,
   HH:MM — Brief outcome from DM conversation ⚡ [DM](https://app.devrev.ai/devrev/computer/dm?chatId=don%3Acore%3Advrv-us-1%3Adevo%2F0%3Adm%2F<DM_SUFFIX>)
     Supporting detail line 1
 ## [[project-or-context]] #category-tag #claude-session
-  HH:MM — Brief outcome from Claude Code ⚡ [session](vclaude://file/Users/shlomi/.claude/projects/<DIR>/<UUID>.jsonl:<LINE>)
+  HH:MM — Brief outcome from Claude Code [📄](vscode://file/Users/shlomi/.claude/projects/<DIR>/<UUID>.jsonl:<USER_LINE>) [🦀](vclaude://file/Users/shlomi/.claude/projects/<DIR>/<UUID>.jsonl:<ASSISTANT_LINE>?name=Brief+outcome)
     Supporting detail line 2
 ```
 
@@ -74,14 +74,16 @@ Journal pages are named by date: `"Jun 9th, 2026"` (use the ordinal suffix: 1st,
 6b. **Issue linking on entries** — After writing all entries, search DevRev (under DevRev Labs / PROD-56) for issues that match each work cluster. If a matching issue is found, append `[DISPLAY-ID](https://app.devrev.ai/devrev/works/DISPLAY-ID)` for ISS/TKT prefixes, or `[DISPLAY-ID](https://app.devrev.ai/devrev/issue/DISPLAY-ID)` for custom prefixes like FDE to the entry line (before the ⚡). If no issue matches, add `#no-issue` to the entry line instead. At the end, list all `#no-issue` entries and offer to create issues for them.
 7. **DM link** — append `[DM](https://app.devrev.ai/devrev/computer/dm?chatId=don%3Acore%3Advrv-us-1%3Adevo%2F0%3Adm%2F<SUFFIX>)` at the end of each timestamp line, linking back to the source conversation. The suffix is the short ID from the DM's DON (e.g., `don:core:dvrv-us-1:devo/0:dm/15thudfCI` → suffix is `15thudfCI`). The DON components are URL-encoded: `:` → `%3A`, `/` → `%2F`.
 8. **Chronological order** — entries within a section MUST be sorted by timestamp ascending. When appending, insert in the correct position or reorder after writing.
-9. **Computer attribution** — two markers:
+9. **Computer attribution** — markers depend on source:
    - `#Computer` on every `##` section heading you create (top-level tag, queryable in Logseq).
-   - `⚡` at the end of each timestamp entry line.
+   - `⚡` at the end of entry lines from **DMs, Slack, meetings, or DevRev objects** (non-Claude-Code sources).
+   - `[📄] [🦀]` at the end of entry lines from **Claude Code sessions** — these icons replace ⚡ (no need for both).
    Example:
    ```
    ## [[DevRev]] #product #Computer
      14:30 — Summarized pipeline status for weekly review ⚡
        3 deals flagged at risk, drafted update for Amar
+     18:11 — Restyled Mana diagram #no-issue [📄](vscode://...) [🦀](vclaude://...?name=Restyled+Mana+diagram)
    ```
 
 ### Existing page references
@@ -179,36 +181,50 @@ for jsonl in sessions_dir.rglob('*.jsonl'):
         continue
     project = jsonl.parent.name.replace('-Users-shlomi-', '~/').replace('-', '/')
     with open(jsonl) as f:
-        for lineno, line in enumerate(f, 1):
-            try:
-                d = json.loads(line)
-            except:
-                continue
-            if d.get('type') != 'user':
-                continue
-            ts = d.get('timestamp')
-            if not ts:
-                continue
-            dt = datetime.fromisoformat(ts.replace('Z', '+00:00'))
-            local_dt = dt.astimezone()
-            if local_dt.strftime('%Y-%m-%d') != today:
-                continue
-            msg = d.get('message', {})
-            content_raw = msg.get('content', '')
-            content = ''
-            if isinstance(content_raw, list):
-                for c in content_raw:
-                    if isinstance(c, dict) and c.get('type') == 'text':
-                        t = c.get('text', '')
-                        if t and not t.strip().startswith('<'):
-                            content = t.strip()[:120]
-                            break
-            elif isinstance(content_raw, str):
-                if not content_raw.strip().startswith('<'):
-                    content = content_raw.strip()[:120]
-            if content:
-                time_str = local_dt.strftime('%H:%M')
-                results.setdefault(project, []).append((time_str, content, str(jsonl), lineno))
+        all_lines = f.readlines()
+    for lineno, line in enumerate(all_lines, 1):
+        try:
+            d = json.loads(line)
+        except:
+            continue
+        if d.get('type') != 'user':
+            continue
+        ts = d.get('timestamp')
+        if not ts:
+            continue
+        dt = datetime.fromisoformat(ts.replace('Z', '+00:00'))
+        local_dt = dt.astimezone()
+        if local_dt.strftime('%Y-%m-%d') != today:
+            continue
+        msg = d.get('message', {})
+        content_raw = msg.get('content', '')
+        content = ''
+        if isinstance(content_raw, list):
+            for c in content_raw:
+                if isinstance(c, dict) and c.get('type') == 'text':
+                    t = c.get('text', '')
+                    if t and not t.strip().startswith('<'):
+                        content = t.strip()[:120]
+                        break
+        elif isinstance(content_raw, str):
+            if not content_raw.strip().startswith('<'):
+                content = content_raw.strip()[:120]
+        if content:
+            time_str = local_dt.strftime('%H:%M')
+            # Find the assistant response line (search forward up to 10 lines)
+            assistant_ln = lineno  # fallback to same line
+            for offset in range(1, 10):
+                idx = lineno - 1 + offset
+                if idx >= len(all_lines):
+                    break
+                try:
+                    ad = json.loads(all_lines[idx])
+                    if ad.get('type') == 'assistant':
+                        assistant_ln = lineno + offset
+                        break
+                except:
+                    continue
+            results.setdefault(project, []).append((time_str, content, str(jsonl), lineno, assistant_ln))
 
 for proj in sorted(results):
     print(f'=== {proj} ===')
@@ -216,8 +232,8 @@ for proj in sorted(results):
     files = set(r[2] for r in results[proj])
     for f in sorted(files):
         print(f'  SESSION: {f}')
-    for t, c, f, ln in results[proj]:
-        print(f'{t} | L{ln} | {c}')
+    for t, c, f, ln, aln in results[proj]:
+        print(f'{t} | L{ln} | A{aln} | {c}')
     print()
 "
 ```
@@ -247,12 +263,14 @@ The scan produces raw user prompts — these are NOT the journal entries. You mu
 - NEVER fabricate timestamps. Every timestamp comes from the `.jsonl` file.
 - Multiple sessions in the same project merge into one section.
 - Don't journal system prompts, skill invocations (lines starting with `##`), or `[Request interrupted]` messages.
-- Claude Code entries get `#claude-session` on the **top-level heading** (same pattern as `#Computer` for DM-sourced sections). Individual entries get the `[session](vclaude://file/...:<LINE>)` link but NOT the tag:
+- Claude Code entries get `#claude-session` on the **top-level heading** (same pattern as `#Computer` for DM-sourced sections). Individual entries get two icon links:
+  - `[📄]` — uses `vscode://file/...:<USER_LINE>` (opens the raw transcript at the user's message)
+  - `[🦀]` — uses `vclaude://file/...:<ASSISTANT_LINE>?name=Short+description` (opens live in Claude Code at the assistant's response, with the description as window title)
+  The scanner captures both line numbers: `lineno` = user message, `assistant_ln` = Claude's response (found by scanning forward for the next `type: "assistant"` line).
   ```markdown
   ## [[project]] #tag #claude-session
-    HH:MM — Built X for Y #feature ⚡ [session](vclaude://file/Users/shlomi/.claude/projects/<PROJECT_DIR>/<SESSION_UUID>.jsonl:<LINE>)
+    HH:MM — Built X for Y #feature [📄](vscode://file/Users/shlomi/.claude/projects/<PROJECT_DIR>/<SESSION_UUID>.jsonl:<USER_LINE>) [🦀](vclaude://file/Users/shlomi/.claude/projects/<PROJECT_DIR>/<SESSION_UUID>.jsonl:<ASSISTANT_LINE>?name=Built+X+for+Y)
   ```
-  The session file path comes directly from the `.jsonl` file being scanned. This lets you open the raw session transcript if needed.
 
 ## Granola Meetings
 
@@ -377,7 +395,7 @@ When compiling the journal for a day, actively look for **open action items** ac
 Add a `## TODOs #Computer` section at the end of the journal page. Each TODO has:
 1. **`TODO` marker** — Logseq's native task keyword (queryable via `{{query (todo TODO)}}`)
 2. **Description with wikilinks** — what needs to be done, linking to the relevant customer/project page
-3. **Source link** — `[DM](https://app.devrev.ai/...)`, `[session](vclaude://file/...:<LINE>)`, or `[thread](https://devrev.slack.com/...)`. For meeting-sourced TODOs, no link is needed — the meeting title in the parent journal entry is the reference.
+3. **Source link** — `[DM](https://app.devrev.ai/...)`, `[📄](vscode://file/...:<LINE>) [🦀](vclaude://file/...:<LINE>?name=Short+desc)`, or `[thread](https://devrev.slack.com/...)`. For meeting-sourced TODOs, no link is needed — the meeting title in the parent journal entry is the reference. The `?name=` param should be the first 3-5 words of the outcome, URL-encoded (spaces as `+`).
 4. **`SCHEDULED: <YYYY-MM-DD DAY>`** — MUST be on the same block as the TODO (append with `\n`). This is how Logseq recognizes scheduled tasks for the agenda view. Do NOT put it as a separate child block.
 5. **Context sub-block** — a child block with expanded context: why this matters, who's involved, what's blocking, relevant background.
 

@@ -12,6 +12,7 @@ on run argv
         set newWindow to (create window with default profile)
         tell newWindow
             tell current session
+                set background color to {8000, 4000, 12000}
                 write text "claude-at '" & pathLine & "'"
             end tell
         end tell

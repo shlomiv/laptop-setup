@@ -86,19 +86,19 @@ The journal lives in Logseq. Journal pages are named by date (e.g. "Jun 9th, 202
    - Use `[[wikilinks]]` for tools, projects, concepts worth linking
    - Group by project using a heading with the project tag
    - Put `#claude-session` on the `## [[project]] #tag` heading (top-level block only)
-   - Link to the session file on each entry: `[session](vclaude://file/<SESSION_PATH>:<LINE>)`
+   - Link to the session file on each entry: `[session](vclaude://file/<SESSION_PATH>:<LINE>?name=First+few+words)` — name param = first 3-5 words of outcome, URL-encoded
 
 5. **Write to Logseq** using `mcp__mcp-logseq__update_page` with mode `replace` (so re-running doesn't duplicate):
 
    Format:
    ```
    ## [[project-name]] #tag #claude-session
-     HH:MM — outcome description with [[wikilinks]] ⚡ [session](vclaude://file/Users/shlomi/.claude/projects/<DIR>/<UUID>.jsonl:<LINE>)
+     HH:MM — outcome description with [[wikilinks]] ⚡ [session](vclaude://file/Users/shlomi/.claude/projects/<DIR>/<UUID>.jsonl:<LINE>?name=Short+outcome)
        Supporting detail
-     HH:MM — another outcome ⚡ [session](vclaude://file/Users/shlomi/.claude/projects/<DIR>/<UUID>.jsonl:<LINE>)
+     HH:MM — another outcome ⚡ [session](vclaude://file/Users/shlomi/.claude/projects/<DIR>/<UUID>.jsonl:<LINE>?name=Short+outcome)
 
    ## [[other-project]] #tag #claude-session
-     HH:MM — outcome ⚡ [session](vclaude://file/Users/shlomi/.claude/projects/<DIR>/<UUID>.jsonl:<LINE>)
+     HH:MM — outcome ⚡ [session](vclaude://file/Users/shlomi/.claude/projects/<DIR>/<UUID>.jsonl:<LINE>?name=Short+outcome)
    ```
 
 ### Structure conventions
