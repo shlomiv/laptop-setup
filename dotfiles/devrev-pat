@@ -1,0 +1,92 @@
+#!/bin/zsh
+set -euo pipefail
+
+SERVICE="devrev-pat"
+LOGO_B64="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"
+
+read_secret() {
+  local name="$1" action="$2"
+  local icon=$(mktemp /tmp/devrev-logo.XXXXXX.png)
+  echo "$LOGO_B64" | base64 -d > "$icon"
+  local result
+  result=$(osascript -e "display dialog \"Enter the new token value for '$name':\" with title \"DevRev PAT — $action\" default answer \"\" with hidden answer with icon POSIX file \"$icon\"" \
+            -e 'text returned of result' 2>/dev/null) || { rm -f "$icon"; echo "Error: dialog cancelled." >&2; return 1; }
+  rm -f "$icon"
+  printf '%s' "$result"
+}
+
+usage() {
+  echo "Usage: devrev-pat <command> [args]"
+  echo ""
+  echo "Commands:"
+  echo "  list                    List all PAT names"
+  echo "  get <name>              Get a PAT value"
+  echo "  add <name> [value]      Add a new PAT (prompts for value if omitted)"
+  echo "  remove <name>           Remove a PAT"
+  echo "  rotate <name> [value]   Rotate an existing PAT (prompts for value if omitted)"
+}
+
+cmd_list() {
+  security dump-keychain | grep -A4 "\"$SERVICE\"" | awk -F'"' '/acct/{print $4}'
+}
+
+cmd_get() {
+  if [ -z "${1:-}" ]; then
+    echo "Usage: devrev-pat get <name>" >&2
+    return 1
+  fi
+  security find-generic-password -s "$SERVICE" -a "$1" -w
+}
+
+cmd_add() {
+  if [ -z "${1:-}" ]; then
+    echo "Usage: devrev-pat add <name> [value]" >&2
+    return 1
+  fi
+  if security find-generic-password -s "$SERVICE" -a "$1" >/dev/null 2>&1; then
+    echo "Error: PAT '$1' already exists. Use 'devrev-pat rotate' to update it." >&2
+    return 1
+  fi
+  local value="${2:-}"
+  if [ -z "$value" ]; then
+    value=$(read_secret "$1" "Add")
+  fi
+  security add-generic-password -s "$SERVICE" -a "$1" -w "$value"
+  echo "Added PAT '$1'"
+}
+
+cmd_remove() {
+  if [ -z "${1:-}" ]; then
+    echo "Usage: devrev-pat remove <name>" >&2
+    return 1
+  fi
+  security delete-generic-password -s "$SERVICE" -a "$1" >/dev/null 2>&1
+  echo "Removed PAT '$1'"
+}
+
+cmd_rotate() {
+  if [ -z "${1:-}" ]; then
+    echo "Usage: devrev-pat rotate <name> [value]" >&2
+    return 1
+  fi
+  if ! security find-generic-password -s "$SERVICE" -a "$1" >/dev/null 2>&1; then
+    echo "Error: PAT '$1' not found. Use 'devrev-pat list' to see available names." >&2
+    return 1
+  fi
+  local value="${2:-}"
+  if [ -z "$value" ]; then
+    value=$(read_secret "$1" "Rotate")
+  fi
+  security delete-generic-password -s "$SERVICE" -a "$1" >/dev/null 2>&1
+  security add-generic-password -s "$SERVICE" -a "$1" -w "$value"
+  echo "Rotated PAT '$1'"
+}
+
+case "${1:-}" in
+  list)   cmd_list ;;
+  get)    cmd_get "${2:-}" ;;
+  add)    cmd_add "${2:-}" "${3:-}" ;;
+  remove) cmd_remove "${2:-}" ;;
+  rotate) cmd_rotate "${2:-}" "${3:-}" ;;
+  *)      usage ;;
+esac

@@ -1,0 +1,4 @@
+#!/bin/bash
+export LOGSEQ_API_TOKEN=$(security find-generic-password -s "devrev-pat" -a "logseq-kg" -w)
+export LOGSEQ_API_URL="${LOGSEQ_API_URL:-http://localhost:12315}"
+exec uv run --python /opt/homebrew/bin/python3.13 --with mcp-logseq mcp-logseq

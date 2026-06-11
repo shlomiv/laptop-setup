@@ -1,0 +1,39 @@
+#!/usr/bin/env python3
+"""
+Tiny HTTP server that redirects to logseq:// deep links.
+
+Mirrors the logseq:// URL structure so switching is a base-URL swap:
+  http://localhost:12316/graph/shlomi-kg?block-id=<uuid>
+  →  logseq://graph/shlomi-kg?block-id=<uuid>
+"""
+
+import http.server
+import sys
+
+PORT = 12316
+
+
+class RedirectHandler(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        # Reconstruct as logseq:// URI
+        logseq_uri = f"logseq://{self.path.lstrip('/')}"
+        if self.path.startswith("/"):
+            logseq_uri = f"logseq:/{self.path}"
+
+        self.send_response(302)
+        self.send_header("Location", logseq_uri)
+        self.end_headers()
+
+    def log_message(self, format, *args):
+        # Suppress request logs
+        pass
+
+
+if __name__ == "__main__":
+    port = int(sys.argv[1]) if len(sys.argv) > 1 else PORT
+    server = http.server.HTTPServer(("127.0.0.1", port), RedirectHandler)
+    print(f"logseq-link-server running on http://localhost:{port}")
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
