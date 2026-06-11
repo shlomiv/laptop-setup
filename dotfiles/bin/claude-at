@@ -1,0 +1,71 @@
+#!/bin/bash
+# Launch claude on a session truncated to a specific line
+# Usage: claude-at /path/to/session.jsonl:LINE
+#
+# Auto-bootstraps on first run by launching claude to create an indexed session.
+# Then overwrites that session's jsonl with truncated content and --continue.
+
+set -euo pipefail
+
+WORK_DIR="/tmp/claude-at"
+# macOS resolves /tmp → /private/tmp
+REAL_WORK_DIR="$(mkdir -p "$WORK_DIR" && cd "$WORK_DIR" && pwd -P)"
+PROJECT_KEY="$(echo "$REAL_WORK_DIR" | sed 's|/|-|g')"
+PROJECT_DIR="$HOME/.claude/projects/$PROJECT_KEY"
+BOOTSTRAP_MARKER="$PROJECT_DIR/.bootstrapped"
+
+if [[ -z "${1:-}" ]]; then
+    echo "Usage: claude-at <session.jsonl>:<line>" >&2
+    exit 1
+fi
+
+# Parse path:line
+FILE="${1%:*}"
+LINE="${1##*:}"
+
+if [[ ! -f "$FILE" ]]; then
+    echo "File not found: $FILE" >&2
+    exit 1
+fi
+
+if ! [[ "$LINE" =~ ^[0-9]+$ ]]; then
+    echo "Invalid line number: $LINE" >&2
+    exit 1
+fi
+
+# Auto-bootstrap if needed
+if [[ ! -f "$BOOTSTRAP_MARKER" ]]; then
+    mkdir -p "$WORK_DIR" "$PROJECT_DIR"
+    cd "$WORK_DIR"
+    echo "First run — type anything then /exit to bootstrap."
+    claude
+
+    SESSION_FILE=$(ls -t "$PROJECT_DIR"/*.jsonl 2>/dev/null | head -1)
+
+    if [[ -n "$SESSION_FILE" ]]; then
+        echo "$(basename "$SESSION_FILE" .jsonl)" > "$BOOTSTRAP_MARKER"
+        echo "Bootstrapped: $(cat "$BOOTSTRAP_MARKER")"
+    else
+        echo "ERROR: Bootstrap failed. No session created." >&2
+        exit 1
+    fi
+fi
+
+SESSION_ID="$(cat "$BOOTSTRAP_MARKER")"
+SESSION_FILE="$PROJECT_DIR/${SESSION_ID}.jsonl"
+
+# Backup bootstrap session, overwrite with truncated content
+cp "$SESSION_FILE" "$SESSION_FILE.bootstrap"
+
+ORIG_ID="$(basename "$FILE" .jsonl)"
+head -n "$LINE" "$FILE" | sed "s/$ORIG_ID/$SESSION_ID/g" > "$SESSION_FILE"
+
+echo "L1-$LINE of $(basename "$FILE") → $SESSION_ID"
+echo "---"
+
+cd "$WORK_DIR"
+claude --continue
+
+# Restore bootstrap for next use
+mv "$SESSION_FILE.bootstrap" "$SESSION_FILE"
+echo "Restored. Ready for next use."

@@ -86,19 +86,19 @@ The journal lives in Logseq. Journal pages are named by date (e.g. "Jun 9th, 202
    - Use `[[wikilinks]]` for tools, projects, concepts worth linking
    - Group by project using a heading with the project tag
    - Put `#claude-session` on the `## [[project]] #tag` heading (top-level block only)
-   - Link to the session file on each entry: `[session](vscode://file/<SESSION_PATH>:<LINE>)`
+   - Link to the session file on each entry: `[session](vclaude://file/<SESSION_PATH>:<LINE>)`
 
 5. **Write to Logseq** using `mcp__mcp-logseq__update_page` with mode `replace` (so re-running doesn't duplicate):
 
    Format:
    ```
    ## [[project-name]] #tag #claude-session
-     HH:MM — outcome description with [[wikilinks]] ⚡ [session](vscode://file/Users/shlomi/.claude/projects/<DIR>/<UUID>.jsonl:<LINE>)
+     HH:MM — outcome description with [[wikilinks]] ⚡ [session](vclaude://file/Users/shlomi/.claude/projects/<DIR>/<UUID>.jsonl:<LINE>)
        Supporting detail
-     HH:MM — another outcome ⚡ [session](vscode://file/Users/shlomi/.claude/projects/<DIR>/<UUID>.jsonl:<LINE>)
+     HH:MM — another outcome ⚡ [session](vclaude://file/Users/shlomi/.claude/projects/<DIR>/<UUID>.jsonl:<LINE>)
 
    ## [[other-project]] #tag #claude-session
-     HH:MM — outcome ⚡ [session](vscode://file/Users/shlomi/.claude/projects/<DIR>/<UUID>.jsonl:<LINE>)
+     HH:MM — outcome ⚡ [session](vclaude://file/Users/shlomi/.claude/projects/<DIR>/<UUID>.jsonl:<LINE>)
    ```
 
 ### Structure conventions
@@ -111,7 +111,7 @@ The journal lives in Logseq. Journal pages are named by date (e.g. "Jun 9th, 202
 - **Supporting details** — indent under the timestamp line. Keep terse.
 - **Tags**: `#tooling` `#config` `#product` `#feature` `#bugfix` `#devops` `#habits` `#claude-code` `#infra` `#meeting`
   - Don't use `#product` for customer work — the `[[Customer/<Name>]]` heading is sufficient.
-- **`#claude-session`** goes on the top-level `##` heading only (NOT on individual entries). The `[session](vscode://file/...:<LINE>)` link goes on each entry line.
+- **`#claude-session`** goes on the top-level `##` heading only (NOT on individual entries). The `[session](vclaude://file/...:<LINE>)` link goes on each entry line.
 
 ### Project name mapping
 
@@ -164,4 +164,4 @@ If Logseq MCP is unavailable (tools not loaded), fall back to writing `~/persona
 - Multiple sessions in the same project on the same day merge into one project section.
 - The scan output is raw material — you must summarize it into outcomes, not dump it verbatim.
 - Don't journal system prompts, skill invocations (lines starting with `##`), or `[Request interrupted]` messages.
-- Each `##` heading MUST have `#claude-session` tag. Each entry line MUST have `[session](vscode://file/...:<LINE>)` link to the source `.jsonl` file.
+- Each `##` heading MUST have `#claude-session` tag. Each entry line MUST have `[session](vclaude://file/...:<LINE>)` link to the source `.jsonl` file.

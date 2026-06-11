@@ -1,0 +1,20 @@
+#!/bin/bash
+# Called by ClaudeAt.app URL handler
+# Opens iTerm2 with a new window running claude-at
+
+PATH_LINE="$1"
+
+osascript - "$PATH_LINE" << 'EOF'
+on run argv
+    set pathLine to item 1 of argv
+    tell application "iTerm2"
+        activate
+        set newWindow to (create window with default profile)
+        tell newWindow
+            tell current session
+                write text "claude-at '" & pathLine & "'"
+            end tell
+        end tell
+    end tell
+end run
+EOF

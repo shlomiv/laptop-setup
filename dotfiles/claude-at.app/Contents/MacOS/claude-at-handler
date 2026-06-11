@@ -1,0 +1,25 @@
+#!/bin/bash
+# URL scheme handler for claude-at://
+# Receives: claude-at:///path/to/session.jsonl:LINE
+# Opens iTerm2 with a new tab running claude-at
+
+URL="$1"
+
+# Strip scheme: claude-at:///path/to... → /path/to...
+PATH_LINE="${URL#claude-at://}"
+
+# Handle double-slash edge case
+PATH_LINE="${PATH_LINE#/}"
+PATH_LINE="/${PATH_LINE}"
+
+osascript -e "
+tell application \"iTerm\"
+    activate
+    tell current window
+        create tab with default profile
+        tell current session
+            write text \"claude-at '${PATH_LINE}'\"
+        end tell
+    end tell
+end tell
+"
