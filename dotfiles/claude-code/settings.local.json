@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(/usr/libexec/PlistBuddy -c \"Set ':New Bookmarks:0:Option Key Sends' 2\" ~/Library/Preferences/com.googlecode.iterm2.plist)",
+      "Bash(/usr/libexec/PlistBuddy -c \"Set ':New Bookmarks:0:Right Option Key Sends' 2\" ~/Library/Preferences/com.googlecode.iterm2.plist)",
+      "Bash(/usr/libexec/PlistBuddy -c \"Print ':New Bookmarks'\" ~/Library/Preferences/com.googlecode.iterm2.plist)",
+      "Bash(log show *)",
+      "Bash(sysctl vm.compressor_mode)",
+      "Bash(memory_pressure)",
+      "Bash(vm_stat)",
+      "Bash(/usr/bin/defaults read *)",
+      "Bash(/Applications/iTerm.app/Contents/Info.plist)",
+      "Bash(plutil -p /Applications/iTerm.app/Contents/Info.plist)",
+      "Bash(defaults read *)"
+    ]
+  }
+}
