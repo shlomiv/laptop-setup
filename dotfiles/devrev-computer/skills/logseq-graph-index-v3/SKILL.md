@@ -1068,6 +1068,45 @@ Key elements:
 
 - **CRITICAL: The `(((uuid)))`  block references MUST use verified full UUIDs** obtained from `getBlock` or `getPageBlocksTree` API calls. NEVER construct or guess a UUID from partial prefixes — Logseq block refs only resolve with exact 36-char UUIDs. A broken ref renders as empty/invisible text.
 
+- **CRITICAL: Citation provenance verification.** Every narrative block the indexer writes (in Phase 5, 8, or 9) contains citations — `(((uuid)))` block references, `[Slack](url)` links, `[ISS-xxx](url)` issue links, `[notes](granola-url)` meeting links. Each citation is a provenance claim: "this fact came from this source." Getting provenance wrong silently corrupts the graph — the reader follows a link and lands somewhere that doesn't say what the narrative claimed.
+
+  **After writing any narrative block, run an adversarial verification pass:**
+
+  For each citation in the block you just composed:
+  1. **Identify the fact** the citation is attached to (what claim does it evidence?).
+  2. **Read the source** — re-read the block/URL the citation points to.
+  3. **Verify the match:** Does the source actually state or directly evidence that specific fact? Not "related to the same topic" — does it *specifically say the thing*?
+  4. **If mismatch** — find the correct source block. Search the page's activity entries for the block whose content actually establishes the claimed fact. Swap the citation.
+
+  **Why this is needed:** The agent's natural failure mode is **topical proximity bias** — when composing a narrative that mentions multiple related facts, it grabs citations from nearby blocks in the same topic cluster rather than tracing each fact to its specific origin. Two blocks can both be "about SDA" but evidence completely different claims.
+
+  **Real example of the failure:**
+  - Block A: "Craig flagged spaces.create removed ⚡ [Slack](link-to-#devrev-labs)" 
+  - Block B: "Workflow at 97 nodes ⚡ [Slack](link-to-#snap-ins)"
+  - Agent writes: "Triggered by Craig flagging spaces.create removed. Workflow at 97 nodes compounds the issue. [Slack thread](link-to-#snap-ins)" — WRONG. The Slack link evidences fact B (97 nodes) but is placed as if it evidences fact A (Craig's flag). The correct link for Craig's flag is in block A.
+
+  **The verification catches this:** After writing the narrative, the agent re-reads block B's Slack link context and asks "does this thread contain Craig flagging spaces.create?" The answer is no — it's about node limits. Mismatch detected → find block A → swap to the correct link.
+
+  **Scope:** This applies to ALL citation types, not just Slack:
+  - `(((uuid)))` — does the referenced block say what the bracketed phrase claims?
+  - `[Slack](url)` — does that thread/message contain the claimed information?
+  - `[ISS-xxx](url)` — is that issue actually about the work described?
+  - `[notes](granola-url)` — is that meeting where the fact was established?
+
+  **Three levels of verification:**
+
+  **Level 1 — Per-citation:** Does each individual citation point to a source that says what the adjacent phrase claims? (Catches: wrong link grabbed from nearby block.)
+
+  **Level 2 — Per-claim (narrative coherence):** Read the entire narrative block as a whole. Do the citations *together* tell the story the narrative asserts? A claim is a composite argument — "X happened because Y, which led to Z." Even if each citation individually checks out, the narrative can still be wrong if the causal chain doesn't hold, or if the citations support a different story than the one being told. Ask: "If I follow ALL these links in sequence, do I arrive at the same conclusion the narrative states?"
+
+  (Catches: correct individual citations assembled into a wrong or misleading narrative — e.g., three true facts stitched into a causal chain that doesn't actually exist.)
+
+  **Level 3 — Per-reasoning (action justification):** When a narrative block justifies an ACTION the indexer took — "opened TODO because...", "closed TODO because...", "supersedes because...", "triggered by..." — verify that the cited evidence actually supports the conclusion drawn. The reasoning is a logical step: premise (citation) → conclusion (action). Ask: "Given ONLY what the cited sources say, is the action I took the logical consequence?"
+
+  (Catches: the agent correctly cites a source but draws the wrong conclusion from it — e.g., citing a thread where Craig discusses a timeline, then concluding "Craig flagged this as blocked" when Craig actually said "aiming to get the PR ready today." Also catches overclaiming — asserting a stronger conclusion than the evidence supports, like closing a TODO based on partial progress that doesn't actually resolve it.)
+
+  **Cost:** One re-read per citation, plus one holistic re-read of the composed narrative, plus one logical audit of the premise→conclusion chain. Cheap compared to the damage of wrong provenance — a misattributed link, a broken narrative, or a wrong action persists in the graph indefinitely and misleads every future reader.
+
 #### TODO supersession (when one TODO replaces another)
 
 When a new TODO supersedes an old one (ownership shift, reframing, delegation), **both sides must narrate the relationship:**
@@ -1871,8 +1910,61 @@ Before any write operation:
 11. Phase 8: Enrich (person wikilinks + block-level (()) refs — no re-reads)
 12. Phase 9: Claims (reconcile existing claims against new activity: absorb, qualify, strengthen, or move to Outdated with comprehensive narrative. Ask user if ambiguous.) — SKIP only if no activity relates to any existing claim
 13. Phase 10: Graph Hygiene (detect attribute placeholder pages, mark exclude-from-graph-view) — SKIP if <5 pages
-14. Final report (only phases that did work)
+14. Phase 11: UUID Verification (MANDATORY — verify ALL (((uuid))) block references across all touched pages resolve correctly. Fix any broken refs.)
+15. Final report (only phases that did work)
 ```
+
+### Phase 11: UUID Verification (MANDATORY — never skip)
+
+**Why this exists:** Phase 6 (Meeting Pages) replaces multi-block meeting entries with compact one-liners and deletes children. Phase 5 (TODO Reconciliation) writes resolution narratives with block refs. Any of these can orphan `(((uuid)))` references that were written during journaling (before indexing moved/deleted blocks). This phase catches ALL broken references graph-wide on today's touched pages.
+
+**Procedure:**
+
+For EACH entity page that was touched today (received blocks, had TODOs reconciled, etc.):
+
+1. Read the full page tree with `getPageBlocksTree`.
+2. Walk ALL blocks, collecting every UUID that exists into a set.
+3. Find all `(((uuid)))` patterns in block content.
+4. For each reference, call `getBlock` on the referenced UUID to check if it exists ANYWHERE in the graph (not just on this page — block refs are graph-wide).
+5. If the block does NOT exist → it's broken.
+
+```python
+import re, json
+
+def verify_refs_on_page(page_name):
+    tree = api("logseq.Editor.getPageBlocksTree", [page_name])
+    if not tree:
+        return []
+    
+    broken = []
+    
+    def walk(blocks):
+        for b in blocks:
+            content = b.get("content", "")
+            uuid = b.get("uuid", "")
+            refs = re.findall(r'\(\(\(([0-9a-f-]{36})\)\)\)', content)
+            for ref in refs:
+                # Check if referenced block exists ANYWHERE
+                target = api("logseq.Editor.getBlock", [ref])
+                if not target:
+                    broken.append((uuid, ref, content[:100]))
+            for c in b.get("children", []):
+                walk([c])
+    
+    walk(tree)
+    return broken
+```
+
+**Fixing broken references:**
+
+1. Use the narrative phrase in `[text](((broken-uuid)))` as a search hint.
+2. Call `logseq.Editor.search` with keywords from that phrase.
+3. Find the block that NOW contains that content (it may have been moved to a different page, recreated with a new UUID, or deleted).
+4. If found → `updateBlock` the referring block with the correct UUID.
+5. If the content was deleted entirely (Phase 6 removed meeting sub-blocks) → point the reference to the parent entry (the meeting one-liner on the entity page) which still captures the same context at a higher level.
+6. Re-verify after fixes.
+
+**Key insight:** `moveBlock` preserves UUIDs, but `removeBlock` + re-creation does NOT. Phase 6's pattern of "replace entry with one-liner and remove children" is the #1 source of orphaned refs. The fix is to ensure grounding references point to blocks that survive the full indexing pipeline.
 
 ## Presentation
 

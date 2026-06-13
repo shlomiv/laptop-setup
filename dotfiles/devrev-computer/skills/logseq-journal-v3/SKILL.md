@@ -414,8 +414,66 @@ print(result.stdout)
    - If the user requests changes (split entries, merge differently, add context, rename sections, drop items) → apply their edits to the plan, show the revised version, and ask again. Repeat until approved.
    - If the user adds narrative context (e.g., "the MongoDB work was actually about fixing the auth bug for PwC") → incorporate that context into the entry description.
 8. **Write entries to journal day page** — grouped by project, sorted chronologically.
-9. **Extract TODOs** — write to `## TODOs` section at end of journal page.
-10. **Confirm** — brief summary: how many entries written, which project sections, any TODOs. 2-3 lines max.
+9. **Extract TODOs** — write to `## TODOs` section at end of journal page (see UUID verification below).
+10. **Verify block references (MANDATORY)** — after writing TODOs, run UUID verification.
+11. **Confirm** — brief summary: how many entries written, which project sections, any TODOs. 2-3 lines max.
+
+### UUID verification (step 10)
+
+After writing all TODOs with `(((uuid)))` block references, verify every referenced UUID actually resolves to a block on the page. This prevents broken/unlinked references.
+
+**Procedure:**
+
+1. Re-read the full page tree with `getPageBlocksTree`.
+2. Walk all blocks, collecting every UUID that exists on the page into a set.
+3. Find all `(((uuid)))` patterns in block content (these are the references).
+4. For each reference, check if the referenced UUID exists in the set.
+
+```python
+import json, re
+
+# After reading page tree into `data`:
+existing_uuids = set()
+ref_blocks = []  # (block_uuid, referenced_uuid, content_snippet)
+
+def walk(blocks):
+    for b in blocks:
+        uuid = b.get('uuid', '')
+        content = b.get('content', '')
+        if uuid:
+            existing_uuids.add(uuid)
+        refs = re.findall(r'\(\(\(([0-9a-f-]{36})\)\)\)', content)
+        for ref in refs:
+            ref_blocks.append((uuid, ref, content[:100]))
+        for c in b.get('children', []):
+            walk([c])
+
+walk(data)
+
+broken = [(bu, ru, c) for bu, ru, c in ref_blocks if ru not in existing_uuids]
+if broken:
+    print(f'BROKEN: {len(broken)} references')
+    for bu, ru, c in broken:
+        print(f'  Block {bu}: refs {ru} | {c}')
+else:
+    print('ALL REFERENCES VALID')
+```
+
+**If broken references are found:**
+
+1. Use the narrative phrase text in the `[...]` part of the broken reference as a search hint — e.g., if the link text says "got past params bug", search for a block on the page whose content contains that text.
+2. Get its actual UUID from the page tree.
+3. Update the broken block with `logseq.Editor.updateBlock` using the correct UUID.
+4. Re-run verification to confirm all references now resolve.
+
+**Root cause prevention:** NEVER use a UUID in a `(((uuid)))` reference unless you have confirmed it exists by:
+- Reading it from the return value of `insertBlock` or `appendBlockInPage` (the API returns the created block with its UUID), OR
+- Looking it up in the `getPageBlocksTree` result after all entries are written.
+
+Do NOT guess, remember from earlier in the conversation, or construct UUIDs. The correct workflow for TODO grounding:
+1. Write ALL activity entries first (steps 8).
+2. Re-read page tree to get the actual UUIDs of all written blocks.
+3. THEN write TODO grounding sub-blocks using UUIDs from that fresh read.
 
 ### Correlation and lumping (BEFORE writing)
 
