@@ -958,10 +958,19 @@ For each entity page that has a `## TODOs` section:
 
 #### Signals for "same intent"
 
-- Same person name AND same action verb (sync, share, prep, fix, deploy)
+Two TODOs are duplicates when ANY of these match:
+- Same person name AND same action verb (sync, share, prep, fix, deploy, document, write)
 - Same `SCHEDULED:` date (or within 1 day)
 - One is a substring/paraphrase of the other
 - Both reference the same `(((uuid)))` origin block
+- **Same noun phrase** appears in both (e.g., "duplicate-request bug", "business case doc", "teams.create migration") — even if surrounding words differ
+- **Same entity page** referenced AND same topic keywords (3+ shared non-trivial words after removing stop words)
+
+**Fuzzy matching procedure:** For each pair of open TODOs on the same entity page:
+1. Extract the core noun phrases (the WHAT: "duplicate-request bug", "business case", "MANA cancellation").
+2. Extract the action verb (the HOW: document, write, fix, deploy, send, sync).
+3. If both noun phrase AND action verb match (or are synonymous) → duplicates.
+4. Account name normalization: "MongoDB" = "mongo" = "Mongo org". Don't let casing or abbreviation differences prevent matching.
 
 #### Keep criteria (ranked)
 
@@ -1144,6 +1153,27 @@ This creates a bidirectional chain: you can trace forward from old → new (what
 - Urgent/blocking item: next business day
 - Long-running project: 1 week out
 - If the activity mentions a deadline, schedule the follow-up 1 day before that deadline
+
+#### Keyword extraction for activity matching (MANDATORY)
+
+Before checking if a TODO is resolved, extract searchable keywords from the TODO text:
+
+1. **Extract noun phrases** from the TODO: the specific thing being acted on (e.g., "duplicate-request bug", "cancel-propagation spec", "business case doc").
+2. **Extract action verbs**: document, write, create, deploy, send, fix, test, share, sync.
+3. **Extract entity references**: page names in `[[...]]`, person names, repo names.
+
+Then scan TODAY's activity entries for matches:
+
+For each activity entry on the TODO's entity page (and cross-referenced pages):
+- Does the entry's content contain the TODO's noun phrase (or close synonym)?
+- Does the entry's timestamp come AFTER or AT the TODO's origin event?
+- Does the entry's `[📄]` link point to the same session file as the TODO's origin?
+
+**Session file matching (strongest signal):** If a TODO says "document X in MD file" and an activity entry's `[📄]` link points to the same `.jsonl` session file at a line number AFTER the TODO's origin → the work was very likely done in that session. Read the entry's `?name=` parameter on the `[🦀]` link for a description of what was accomplished.
+
+**Synonym awareness:** "document" ≈ "write" ≈ "create" ≈ "save". "Fix" ≈ "resolve" ≈ "debug". "Deploy" ≈ "ship" ≈ "push". Don't miss matches because one says "documented" and the other says "wrote spec for".
+
+This prevents the common failure: meeting says "do X" → Claude does X 5 minutes later in the same session → indexer doesn't notice and leaves the TODO open.
 
 #### Resolution matching (use judgment)
 

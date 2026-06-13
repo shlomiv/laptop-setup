@@ -222,6 +222,7 @@ else:
 - **If the scanner says "NO ENTRIES FOUND", write ZERO Claude Code entries.** Do not invent entries from filenames, directory listings, or your imagination.
 - **Never fabricate line numbers.** The scanner outputs `HH:MM | L<N> | A<N> | text` — use THOSE line numbers verbatim for the `[📄]` and `[🦀]` links. The scanner also shows `(N lines)` per session file — your line numbers must be ≤ that number.
 - **Never fabricate content.** The outcome description MUST be derived from the actual user message text output by the scanner. If the scanner says "set up my iterm2 to darkmnodeq", the entry is about iTerm2 dark mode — NOT about FZF or anything else you hallucinated.
+- **Read assistant tool calls for outcome clarity.** When a user message is an instruction to write/save/document something (e.g., "keep this as an MD file", "save this as a spec"), the outcome description MUST reflect WHAT was written — not just that something was saved. Look at the assistant's response lines (between the user line and the next user line) for `Write` or `Edit` tool_use blocks. The file path and the first line of content tell you what was actually produced. Example: if the assistant wrote `docs/specs/2026-06-12-cancel-propagation-to-external-system.md`, the outcome is "Documented cancel-propagation spec for MANA duplicate-request bug" — NOT "Saved roadmap alternatives to MD file". When the scanner output shows a vague user message like "lets do A now, but keep this as an MD file", you MUST read a few lines ahead in the session to find the tool_use/Write call and use THAT for the outcome description.
 - **Cross-check:** `[📄]` line ≤ total lines in file. `[🦀]` line > `[📄]` line. Both ≤ total lines. If any of these fail, you made an error.
 - **No scanner output = no entries.** If the script produced no output for a project/session, that session had no activity on the target date. Period.
 
@@ -380,6 +381,23 @@ Actively look for open action items across all sources:
 - Every TODO needs: SCHEDULED date, grounded block reference.
 - `#no-issue` if no matching DevRev issue found; issue link in sub-block if found.
 - Due date heuristics: "by end of week" = Friday, "tomorrow" = next business day, "soon" = 3 business days.
+
+**Cross-reference against same-day activity (MANDATORY):**
+
+Before writing ANY TODO derived from meeting notes or DMs, check if a later activity entry (by timestamp) on the SAME day already fulfills it. This is the #1 source of false TODOs.
+
+Procedure:
+1. For each candidate TODO from meetings/DMs, extract the core action (e.g., "document duplicate-request bug in MD file").
+2. Scan ALL activity entries gathered from ALL sources (Claude Code, Slack, etc.) for the same day.
+3. If an activity entry's outcome description matches the TODO's intent (same topic + same action verb like "wrote", "documented", "created", "deployed", "sent"), the work is DONE — do NOT write a TODO.
+4. When in doubt (activity is vaguely related but not clearly completing the TODO), write the TODO but add a note: "Possibly already done — see HH:MM entry."
+
+Example:
+- Meeting at 12:00 says: "Next: Shlomi to document bug in MD"
+- Activity at 12:01 says: "Documented duplicate-request bug spec in MongoDB repo [📄](...)"
+- Result: Do NOT create a TODO. The 12:01 entry IS the completion.
+
+Additionally, check if the TODO's origin and a later Claude Code entry share the SAME session file. If a meeting action item was discussed at 12:00 and the scanner shows activity in the same `.jsonl` at 12:01+ with a Write tool call — that's strong evidence the work was done immediately.
 
 **CRITICAL: API newline convention.** TODOs with SCHEDULED must use Python-internal pattern for real newlines:
 ```bash
