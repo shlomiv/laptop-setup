@@ -501,17 +501,94 @@ Each journal section heading `## [[PageName]] #tag` tells you the target entity 
 
 **Disambiguation principle:** When a concept could route to multiple pages (e.g., a product that has both an engineering page and a marketing page), use the `#tag` to disambiguate. Code/deploy/build → engineering page. Blog/landing page/positioning → marketing/concept page.
 
-#### Move to entity pages
+#### Idempotent move to entity pages
 
-For each journal section:
+**Before moving, run Datalog fingerprint dedup to avoid duplicates:**
+
+```python
+import re
+
+def extract_fingerprint(content):
+    """Extract unique source fingerprint from entry content."""
+    # Claude Code: session file + line
+    m = re.search(r'vscode://file/.+?/([0-9a-f-]+\.jsonl:\d+)', content)
+    if m: return m.group(1)
+    # Slack permalink
+    m = re.search(r'archives/[A-Z0-9]+/p\d+', content)
+    if m: return m.group(0)
+    # Granola meeting UUID
+    m = re.search(r'document_id=([0-9a-f-]{36})', content)
+    if m: return f"document_id={m.group(1)}"
+    # DM chat ID
+    m = re.search(r'chatId=([^&)]+)', content)
+    if m: return f"chatId={m.group(1)}"
+    return None  # No fingerprint — manual entry, always move
+
+# Collect fingerprints from all journal entries to move
+journal_fps = {}
+manual_entries = []
+for entry in all_journal_entries:
+    fp = extract_fingerprint(entry.content)
+    if fp:
+        journal_fps[fp] = entry
+    else:
+        manual_entries.append(entry)  # #manual-entry or no source link
+
+# Batch Datalog: which of these already exist on entity pages?
+query = '[:find ?needle :in $ [?needle ...] :where [?b :block/content ?c] [(clojure.string/includes? ?c ?needle)]]'
+existing_in_graph = set(datalog_query(query, list(journal_fps.keys())))
+
+# Classify
+to_move = {fp: e for fp, e in journal_fps.items() if fp not in existing_in_graph}
+to_discard = {fp: e for fp, e in journal_fps.items() if fp in existing_in_graph}
+
+# Discard duplicates (already on entity pages from prior index run)
+for fp, entry in to_discard.items():
+    api("logseq.Editor.removeBlock", [entry.uuid])
+
+# Manual entries: always move (never discard)
+to_move_list = list(to_move.values()) + manual_entries
+```
+
+**Then for each entry that passes dedup, check for `amend::` directives:**
+
+```python
+for entry in to_move_list:
+    content = entry.content
+    
+    if "amend::" in content:
+        # Case 3: merge as sub-block of existing entry on entity page
+        target_uuid = re.search(r'amend:: ([0-9a-f-]{36})', content).group(1)
+        # Strip the amend:: line before moving
+        clean_content = re.sub(r'\namend:: [0-9a-f-]{36}', '', content)
+        api("logseq.Editor.updateBlock", [entry.uuid, clean_content])
+        api("logseq.Editor.moveBlock", [entry.uuid, target_uuid, {"children": True}])
+    else:
+        # Case 1: normal move to day heading
+        api("logseq.Editor.moveBlock", [entry.uuid, day_heading_uuid, {"children": True}])
+```
+
+**For each journal section (after dedup and amend processing):**
 
 1. Check if entity page exists. If not, create it (with initialization procedure above).
 
 2. Find `## Activity` section UUID on the entity page.
 
-3. Check if today's `[[Day]]` heading exists under Activity. If not, create it.
+3. **Check if today's `[[Day]]` heading already exists** under Activity using Datalog:
+   ```clojure
+   [:find (pull ?b [:block/uuid])
+    :where
+    [?b :block/page ?p]
+    [?p :block/name "<page-name-lowercase>"]
+    [?b :block/content ?c]
+    [(clojure.string/includes? ?c "[[Jun 12th, 2026]]")]
+    [?b :block/parent ?activity]
+    [?activity :block/content "## Activity"]]
+   ```
+   - If exists → use that UUID. **NEVER create a second day heading.**
+   - If not → create it.
 
-4. **MOVE each child entry block** from the journal section to the day heading on the entity page using `moveBlock`.
+4. **MOVE each entry** (that passed dedup) to the day heading using `moveBlock`.
 
 5. After all children are moved, **delete the now-empty section heading** from the journal using `removeBlock`.
 
@@ -1471,7 +1548,35 @@ Scan each block's content and link ANY of the following:
 | Meeting (if page exists) | `[[Meeting/...]]` | `[[Meeting/2026-06-10 - Mana Integration with Dex]]` |
 | Concept/platform | `[[Concept]]` | `[[DevRev]]` |
 | DevRev issue ID (bare text) | `[ID](url)` | `[FDE-20](https://app.devrev.ai/devrev/issue/FDE-20)` |
+| Relative date reference | `[[Day Page]]` | `[[Jun 17th, 2026]]` |
 | Specific prior fact/decision | `[narrative](((uuid)))` | `[security waiver](((uuid)))` |
+
+**Date resolution (MANDATORY during enrichment):**
+
+ANY reference to a date — relative OR absolute — must become a `[[Day]]` wikilink. Dates are temporal anchors; linking them makes the graph navigable across time.
+
+**Absolute dates** — already specify the day:
+- "June 17th" → `[[Jun 17th, 2026]]`
+- "Jun 12" → `[[Jun 12th, 2026]]`
+- "2026-06-15" → `[[Jun 15th, 2026]]`
+
+**Relative dates** — resolve using the entry's own date or `created::` as reference:
+- "next Tuesday" written on Jun 11th (Wed) → `[[Jun 17th, 2026]]`
+- "tomorrow" in an entry timestamped Jun 12th → `[[Jun 13th, 2026]]`
+- "by end of week" on a Wednesday → `[[Jun 13th, 2026]]` (Friday)
+- "Monday" in context of "scheduling for next week" → resolve to the specific Monday
+- "by tonight" / "today" on Jun 12th → `[[Jun 12th, 2026]]`
+
+**Why:** This creates forward AND backward temporal links. When that day arrives, backlinks show what was planned for it. When reviewing a past day, you can see what future commitments were made. Dates are first-class graph nodes — don't leave them as dead text.
+
+**Date link format:** Use Logseq's labeled page link syntax `[display text]([[Page Name]])` for dates. This renders the display text as a clickable link to the day page — readable prose AND navigable.
+- ❌ WRONG: `[investor pitch [[Jun 17th, 2026]]](((uuid)))` — nested wikilink inside block ref phrase
+- ❌ WRONG: `[text](((uuid))) [[Jun 17th, 2026]]` — bare wikilink adjacent to block ref gets parser-merged
+- ✅ CORRECT: `[Mayfield investor pitch](((uuid))) [next Tuesday]([[Jun 17th, 2026]]) uses MongoDB...`
+
+The pattern: dates get their OWN labeled page link — `[narrative text]([[Day]])`. Keep them as a separate link from any block ref. The narrative text ("next Tuesday", "by Friday", "tonight") stays human-readable; the `[[Day]]` target creates the backlink.
+
+**Nesting constraint:** NEVER put a `[[wikilink]]` inside the `[phrase]` part of a `[phrase](((uuid)))` block ref. They are separate link types — use them as siblings in the sentence, never nested.
 
 #### Process
 
@@ -1870,9 +1975,13 @@ Run on every indexing pass. The check is cheap (name match against a fixed list)
 
 ## Idempotency
 
+**Primary mechanism: Datalog fingerprint dedup.** Before moving any block, the indexer batch-queries the graph for all source fingerprints in the journal entries. Entries whose fingerprint already exists on an entity page are discarded (removed from journal) rather than moved. This makes re-runs safe — the same entry is never moved twice.
+
+**Secondary mechanism: Day heading uniqueness.** Before creating a `[[Day]]` heading under `## Activity`, the indexer queries via Datalog to check if one already exists. If yes, it reuses the existing UUID. This prevents duplicate day headings.
+
 Before any write operation:
 
-1. **Phase 1 (Route):** If the journal day page is already empty (no section headings with entries), Phase 1 is a no-op — blocks were already moved on a prior run. If the journal has content, move it. Never duplicate: if an entry's content already exists on the target entity page (from a prior partial run), delete it from the journal with `removeBlock` instead of moving.
+1. **Phase 1 (Route):** If the journal day page is already empty (no section headings with entries), Phase 1 is a no-op. If the journal has content, run Datalog fingerprint dedup: entries already on entity pages are discarded via `removeBlock`, genuinely new entries are moved. Entries with `amend::` directives are moved as sub-blocks of the target entry. Manual entries (no fingerprint, `#manual-entry`) are always moved.
 
 2. **Phase 2 (Page Materialization):** Always runs (even on re-runs). Check each page's first block for `type::` — if present, skip. This makes it cheap and idempotent. Person pages that already have `alias::` are skipped entirely.
 
@@ -1929,24 +2038,46 @@ Before any write operation:
 ```
 1. Date determination (MANDATORY — run `date`, correct year if needed, build page name)
 2. Pre-flight health check
-3. Phase 0: Inventory (read journal → target pages → print source inventory)
-4. Phase 1: Route (MOVE journal entries -> entity pages, journal ends up empty)
-5. Phase 2: Page Materialization + Contact Enrichment (MANDATORY — ensure ALL referenced pages exist with type/identity/alias properties; enrich Customer/*/People/* with actionable identity from DevRev + graph context)
+3. Phase 0: Inventory (read journal → extract markers → Datalog fingerprint dedup → print source inventory)
+4. Phase 1: Route (Datalog dedup → discard duplicates → handle amend:: directives → MOVE new entries to entity pages. NEVER create duplicate day headings.)
+5. Phase 2: Page Materialization + Contact Enrichment (MANDATORY)
 6. Phase 3: Sort, Dedup & Lump (MANDATORY — chronological order + remove duplicate entries + merge flat entries that should be nested)
-7. Phase 4: TODO Deduplication (MANDATORY — remove duplicate TODOs by intent, keep richest version)
-8. Phase 5: TODO Reconciliation (MANDATORY — absorb new info into related TODOs, then reassess: close, reframe, or enrich. Ask user if ambiguous.)
+7. Phase 4: TODO Deduplication (MANDATORY — fuzzy noun-phrase matching, remove duplicates by intent)
+8. Phase 5: TODO Reconciliation (MANDATORY — keyword extraction + session-file matching. Absorb new info, reassess. Ask user if ambiguous.)
 9. Phase 6: Meeting Pages (create Meeting/ pages from #meeting entries) — SKIP if no meetings
 10. Phase 7: Issue Link (1 search per theme cluster, strict match, FetchObjectContext for alias)
 11. Phase 8: Enrich (person wikilinks + block-level (()) refs — no re-reads)
-12. Phase 9: Claims (reconcile existing claims against new activity: absorb, qualify, strengthen, or move to Outdated with comprehensive narrative. Ask user if ambiguous.) — SKIP only if no activity relates to any existing claim
+12. Phase 9: Claims (reconcile existing claims against new activity) — SKIP only if no activity relates to any existing claim
 13. Phase 10: Graph Hygiene (detect attribute placeholder pages, mark exclude-from-graph-view) — SKIP if <5 pages
-14. Phase 11: UUID Verification (MANDATORY — verify ALL (((uuid))) block references across all touched pages resolve correctly. Fix any broken refs.)
-15. Final report (only phases that did work)
+14. Phase 11: UUID Verification (MANDATORY — verify ALL (((uuid))) block references resolve correctly)
+15. Update `last_indexed::` on journal page (set to latest moved entry timestamp)
+16. Final report (only phases that did work)
 ```
 
 ### Phase 11: UUID Verification (MANDATORY — never skip)
 
 **Why this exists:** Phase 6 (Meeting Pages) replaces multi-block meeting entries with compact one-liners and deletes children. Phase 5 (TODO Reconciliation) writes resolution narratives with block refs. Any of these can orphan `(((uuid)))` references that were written during journaling (before indexing moved/deleted blocks). This phase catches ALL broken references graph-wide on today's touched pages.
+
+**Additionally:** This phase catches MALFORMED grounding references — the #2 failure mode after orphaned UUIDs. A malformed grounding is a markdown link `[phrase](target)` where `target` is NOT a `(((uuid)))` block reference but instead contains:
+- Raw text descriptions: `[phrase](some description text)`
+- Wikilinks as targets: `[phrase]([[Page Name]])`
+- Partial content as target: `[phrase](works.create only accepts team ID...)`
+
+These are ALWAYS wrong. The ONLY valid grounding format in this graph is `[phrase](((36-char-uuid)))`. Anything else means the agent failed to look up the actual block UUID and stuffed a description into the link target instead.
+
+**Detection regex for malformed groundings:**
+```python
+# Find all markdown links that are NOT block refs and NOT valid URLs/schemes
+malformed_pattern = r'\[([^\]]+)\]\((?!http|vscode|vclaude|granola|\(\()([^)]+)\)'
+# Matches: [any phrase](anything that isn't a URL scheme or (((uuid))))
+# These are the broken ones — text/wikilinks in the target position
+```
+
+**Fix procedure for malformed groundings:**
+1. Extract the `[phrase]` text — this describes what the grounding should point to.
+2. Search today's activity blocks on the same entity page for content matching that phrase's keywords.
+3. Use the matching block's UUID to rewrite as `[phrase](((correct-uuid)))`.
+4. If no match found on the same page, search related pages (cross-page grounding).
 
 **Procedure:**
 
@@ -1962,30 +2093,55 @@ For EACH entity page that was touched today (received blocks, had TODOs reconcil
 import re, json
 
 def verify_refs_on_page(page_name):
+    """Check for BOTH broken UUID refs AND malformed grounding links."""
     tree = api("logseq.Editor.getPageBlocksTree", [page_name])
     if not tree:
-        return []
+        return [], []
     
-    broken = []
+    broken_uuids = []
+    malformed_links = []
+    
+    # Valid link targets: URLs (http, vscode, vclaude, granola), block refs (((...)))
+    valid_target_pattern = re.compile(r'^(https?://|vscode://|vclaude://|granola://|\(\([0-9a-f-]{36}\)\))')
     
     def walk(blocks):
         for b in blocks:
             content = b.get("content", "")
             uuid = b.get("uuid", "")
+            
+            # Check 1: Broken (((uuid))) refs (target block doesn't exist)
             refs = re.findall(r'\(\(\(([0-9a-f-]{36})\)\)\)', content)
             for ref in refs:
-                # Check if referenced block exists ANYWHERE
                 target = api("logseq.Editor.getBlock", [ref])
                 if not target:
-                    broken.append((uuid, ref, content[:100]))
+                    broken_uuids.append((uuid, ref, content[:100]))
+            
+            # Check 2: Malformed grounding links [phrase](not-a-valid-target)
+            # Only check blocks that start with "Because" or contain grounding patterns
+            if 'Because' in content or 'Resolved:' in content or 'Supersedes' in content:
+                # Find all markdown links in this block
+                links = re.findall(r'\[([^\]]+)\]\(([^)]+)\)', content)
+                for phrase, target in links:
+                    if not valid_target_pattern.match(target):
+                        # This is a malformed grounding — target is raw text, wikilink, or garbage
+                        malformed_links.append((uuid, phrase, target, content[:100]))
+            
             for c in b.get("children", []):
                 walk([c])
     
     walk(tree)
-    return broken
+    return broken_uuids, malformed_links
 ```
 
-**Fixing broken references:**
+**Fixing malformed groundings:**
+
+1. For each malformed link `[phrase](bad-target)`, the `phrase` describes the fact being grounded.
+2. Search the same entity page's activity blocks for content that matches the phrase's keywords (use `clojure.string/includes?` Datalog or walk the page tree).
+3. The matching block's UUID becomes the correct target: rewrite as `[phrase](((correct-uuid)))`.
+4. If no match on the same page, check related entity pages.
+5. **Root cause prevention:** This happens when the agent writes TODO grounding sub-blocks WITHOUT first looking up the activity block UUID via `getPageBlocksTree`. The correct workflow is: (a) write all activity blocks, (b) re-read the page to get their UUIDs, (c) THEN write groundings using those verified UUIDs. Never compose a grounding link without a verified UUID in hand.
+
+**Fixing broken UUID references:**
 
 1. Use the narrative phrase in `[text](((broken-uuid)))` as a search hint.
 2. Call `logseq.Editor.search` with keywords from that phrase.
@@ -1995,6 +2151,37 @@ def verify_refs_on_page(page_name):
 6. Re-verify after fixes.
 
 **Key insight:** `moveBlock` preserves UUIDs, but `removeBlock` + re-creation does NOT. Phase 6's pattern of "replace entry with one-liner and remove children" is the #1 source of orphaned refs. The fix is to ensure grounding references point to blocks that survive the full indexing pipeline.
+
+### Phase 12: Update `last_indexed::` marker
+
+After all phases complete successfully, update the journal day page's `last_indexed::` property:
+
+```python
+def update_last_indexed(page_name, timestamp_str, token):
+    """Set or update last_indexed:: on the journal page's first block."""
+    tree = api("logseq.Editor.getPageBlocksTree", [page_name])
+    if not tree:
+        return
+    
+    first_block = tree[0]
+    content = first_block.get('content', '')
+    uuid = first_block.get('uuid', '')
+    
+    if 'last_indexed::' in content:
+        content = re.sub(r'last_indexed:: .+', f'last_indexed:: {timestamp_str}', content)
+    else:
+        if 'last_journaled::' in content:
+            # Add after last_journaled line
+            content = re.sub(r'(last_journaled:: .+)', rf'\1\nlast_indexed:: {timestamp_str}', content)
+        elif content.strip() == '':
+            content = f'last_indexed:: {timestamp_str}'
+        else:
+            content = f'last_indexed:: {timestamp_str}\n{content}'
+    
+    api("logseq.Editor.updateBlock", [uuid, content])
+```
+
+The timestamp should be the latest activity entry timestamp that was successfully moved to an entity page — NOT the current clock time. This ensures `last_indexed` represents data freshness.
 
 ## Presentation
 

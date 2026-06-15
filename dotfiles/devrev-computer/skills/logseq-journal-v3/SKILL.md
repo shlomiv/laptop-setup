@@ -100,7 +100,14 @@ Page name: `"Jun 11th, 2026"` (ordinal suffix: 1st, 2nd, 3rd, 4th-20th, 21st, 22
 7. **Attribution markers** (source signal, no `#Computer` tag needed):
    - `⚡` at end of entry line — from DMs, Slack, meetings, DevRev objects
    - `[📄](vscode://...) [🦀](vclaude://...)` at end — from Claude Code sessions
-   - No marker — human-authored
+   - `#manual-entry` — human-authored, no source fingerprint
+
+   **Invariant:** every entry the skill *generates* carries a source fingerprint and one of the automated markers above. The skill NEVER writes a sourceless activity entry. Therefore, at end of run, EVERY activity block on the page must be *either* fingerprinted/marked (automated) *or* `#manual-entry` (human-authored). A block that is neither is NOT a manual entry — it is a skill error (a write that lost its marker). Surface it; never silently treat it as manual.
+
+   **How `#manual-entry` gets applied — by timing, not by absence of a marker:**
+   - The tag is applied in a FIRST PASS (step 3), before any new entries are written: any entry already on the page at the start of the run predates this run, so it is human-authored by definition — tag it `#manual-entry`.
+   - Do NOT infer "manual" later from "this entry has no fingerprint." That would mask the skill's own marker bugs. Classification is by *when the entry appeared* (pre-existing → manual), verified by an end-of-run audit (step 13a).
+   - The human never adds this tag themselves; the skill always does.
 
 8. **DM link** — append `[DM](https://app.devrev.ai/devrev/computer/dm?chatId=don%3Acore%3Advrv-us-1%3Adevo%2F0%3Adm%2F<SUFFIX>)` for DM-sourced entries.
 
@@ -124,9 +131,184 @@ Use wikilinks to existing pages when relevant:
 - `[[laptop-setup]]` — infra/dotfiles
 - `[[DevRev]]` — DevRev platform/product
 
+## Incremental Mode (Multi-Run Support)
+
+This skill supports running multiple times per day. On subsequent runs, it gathers ONLY new activity since the last run — saving tokens and avoiding duplicates.
+
+### Journal page markers
+
+The journal day page carries two timestamps in its first block (as Logseq page properties):
+
+```
+last_journaled:: 2026-06-12T20:10:00-05:00
+last_indexed:: 2026-06-12T20:10:00-05:00
+```
+
+| Marker | Meaning | Set by |
+|---|---|---|
+| `last_journaled` | Timestamp of latest activity entry written. Source data freshness boundary. | This skill (journal) |
+| `last_indexed` | Timestamp of latest entry moved to entity pages. | Indexer skill |
+
+**The timestamp is the latest ACTIVITY timestamp captured** — not the time the skill ran.
+
+### Reading markers (Step 0 of workflow)
+
+```python
+import re
+from datetime import datetime
+
+def read_markers(page_tree):
+    """Extract last_journaled and last_indexed from page properties."""
+    if not page_tree or not isinstance(page_tree, list):
+        return None, None
+    
+    first_block = page_tree[0]
+    content = first_block.get('content', '')
+    
+    lj_match = re.search(r'last_journaled:: (.+)', content)
+    li_match = re.search(r'last_indexed:: (.+)', content)
+    
+    last_journaled = datetime.fromisoformat(lj_match.group(1)) if lj_match else None
+    last_indexed = datetime.fromisoformat(li_match.group(1)) if li_match else None
+    
+    return last_journaled, last_indexed
+```
+
+### Source fingerprints
+
+Every entry has a unique source identifier embedded in its links. These are the dedup keys.
+
+| Source | Fingerprint fragment (unique substring) | Where in entry |
+|---|---|---|
+| Claude Code | `<session-uuid>.jsonl:<line>` | `[📄](vscode://file/.../<uuid>.jsonl:<LINE>)` |
+| Slack | `archives/<CHANNEL_ID>/p<TIMESTAMP>` | `[Slack](https://devrev.slack.com/archives/...)` |
+| Granola | `document_id=<UUID>` | `[notes](granola://...document_id=<UUID>...)` |
+| DMs | `chatId=<DON_SUFFIX>` | `[DM](https://app.devrev.ai/...chatId=...)` |
+| DevRev objects | DON ID (e.g., `issue/304209`) | `[ISS-xxx](url)` or DON |
+| Manual | None | Tagged `#manual-entry`, always new |
+
+### Datalog fingerprint dedup
+
+**"Which of my gathered items already exist somewhere in the graph?"**
+
+```python
+def check_fingerprints_exist(fingerprints, token):
+    """Batch Datalog query: which fingerprints are already in the graph?
+    Returns the SET of fingerprints that already exist."""
+    if not fingerprints:
+        return set()
+    
+    # Build Datalog query with needle list
+    query = '[:find ?needle :in $ [?needle ...] :where [?b :block/content ?c] [(clojure.string/includes? ?c ?needle)]]'
+    
+    payload = json.dumps({
+        "method": "logseq.DB.datascriptQuery",
+        "args": [query, fingerprints]
+    })
+    result = subprocess.run(
+        ['curl', '-s', '-X', 'POST', 'http://localhost:12315/api',
+         '-H', f'Authorization: Bearer {token}',
+         '-H', 'Content-Type: application/json',
+         '-d', payload],
+        capture_output=True, text=True)
+    
+    try:
+        data = json.loads(result.stdout)
+        # Result is [[needle1], [needle2], ...] — flatten
+        return set(item[0] for item in data if item)
+    except:
+        return set()
+
+def extract_fingerprint(content):
+    """Extract the unique source fingerprint from an entry's content."""
+    # Claude Code: session file + line
+    m = re.search(r'vscode://file/.+?/([0-9a-f-]+\.jsonl:\d+)', content)
+    if m: return m.group(1)
+    
+    # Slack permalink
+    m = re.search(r'archives/[A-Z0-9]+/p\d+', content)
+    if m: return m.group(0)
+    
+    # Granola meeting UUID
+    m = re.search(r'document_id=([0-9a-f-]{36})', content)
+    if m: return f"document_id={m.group(1)}"
+    
+    # DM chat ID
+    m = re.search(r'chatId=([^&)]+)', content)
+    if m: return f"chatId={m.group(1)}"
+    
+    # DevRev issue
+    m = re.search(r'(issue|works)/[A-Z]+-\d+', content)
+    if m: return m.group(0)
+    
+    return None  # No fingerprint — manual entry
+```
+
+### Three-way decision
+
+After fingerprint dedup, each gathered item is classified:
+
+| Case | Condition | Action |
+|---|---|---|
+| **1. Net new** | Fingerprint not in graph, not on journal page already | Add as new entry |
+| **2. Discard** | Fingerprint already exists in graph or on journal page | Skip |
+| **3. Sub-block** | Fingerprint is new, BUT topically related to an existing entry (same people + subject + within ~30 min) | Add as sub-block of that entry |
+
+For case 3 detection, use targeted Datalog to fetch today's entries on the relevant entity page:
+
+```clojure
+[:find (pull ?b [:block/uuid :block/content])
+ :where
+ [?b :block/page ?p]
+ [?p :block/name "<page-name-lowercase>"]
+ [?b :block/parent ?parent]
+ [?parent :block/content ?pc]
+ [(clojure.string/includes? ?pc "Jun 12th, 2026")]]
+```
+
+### Updating markers after writing
+
+After writing all entries to the journal page, update `last_journaled::`:
+
+```python
+def update_last_journaled(page_name, timestamp_str, token):
+    """Set or update last_journaled:: on the journal page's first block."""
+    tree = api("logseq.Editor.getPageBlocksTree", [page_name])
+    if not tree:
+        return
+    
+    first_block = tree[0]
+    content = first_block.get('content', '')
+    uuid = first_block.get('uuid', '')
+    
+    if 'last_journaled::' in content:
+        # Update existing
+        content = re.sub(r'last_journaled:: .+', f'last_journaled:: {timestamp_str}', content)
+    else:
+        # Add to properties block (or create properties block)
+        if content.strip() == '':
+            content = f'last_journaled:: {timestamp_str}'
+        else:
+            content = f'last_journaled:: {timestamp_str}\n{content}'
+    
+    api("logseq.Editor.updateBlock", [uuid, content])
+```
+
+---
+
 ## Data Sources
 
 **⚠️ CRITICAL: Query ALL sources below for EVERY run. Do NOT skip any source based on day-of-week (weekend/weekday), holidays, or assumptions about when the user works. The user works every day. If a source returns empty results, that's fine — but you MUST query it. Never write "(none - Sunday)" or "(none - weekend)" — those are fabricated excuses for not querying.**
+
+**⚠️ DELTA MODE: If `last_journaled` exists, apply delta filtering to each source. If `last_journaled` is None (first run), gather the full day.**
+
+| Source | Full-day query | Delta query (when `last_journaled` exists) |
+|---|---|---|
+| Claude Code | Scanner with `today = '<TARGET_DATE>'` | Add filter: `if local_dt > last_journaled` after timestamp parse |
+| Slack | `from:<@ID> on:YYYY-MM-DD` | `from:<@ID> after:YYYY-MM-DDTHH:MM` |
+| Granola | `ListMeetings(custom_start=today)` → `GetMeetings` all | Same `ListMeetings` → Datalog UUID check → `GetMeetings` only new |
+| DMs | `start_date=today, end_date=today` | Same query, filter results by `modified_date > last_journaled` |
+| DevRev SQL | `modified_date >= today` | `modified_date > TIMESTAMPTZ '<last_journaled>'` |
 
 ### 1. Claude Code sessions
 
@@ -164,6 +346,10 @@ for jsonl in sessions_dir.rglob('*.jsonl'):
         local_dt = dt.astimezone()
         if local_dt.strftime('%Y-%m-%d') != today:
             continue
+        # DELTA MODE: skip entries before last_journaled timestamp
+        # (uncomment and set LAST_JOURNALED when in delta mode)
+        # if LAST_JOURNALED and local_dt <= LAST_JOURNALED:
+        #     continue
         msg = d.get('message', {})
         content_raw = msg.get('content', '')
         content = ''
@@ -420,21 +606,54 @@ print(result.stdout)
 
 1. **Pre-flight health check** — STOP if fails.
 2. **Get the ACTUAL date** — MANDATORY, see below. Run `date` before anything else.
-3. **Read current journal page** — avoid duplicates.
-4. **Gather data from ALL sources** (steps 1-5 above). Query EVERY source — no exceptions, no skipping based on day-of-week.
-5. **Brief status** — one line: `Gathered: X Claude Code entries, Y Slack, Z DMs, N meetings, M issues.` Do NOT dump a full timeline or analysis to the user.
-6. **Correlate across sources** — merge related activity into single entries (see below).
-7. **🚦 USER GATE — Show proposed groupings and WAIT for approval.**
+3. **Read journal page + extract markers.**
+   - Read `getPageBlocksTree` for the journal day page.
+   - Extract `last_journaled::` and `last_indexed::` from the first block (see `read_markers()` above).
+   - Collect any existing entries on the journal page (not yet indexed). Extract their fingerprints into a `journal_fingerprints` set.
+   - **FIRST PASS — manual-entry tagging (MANDATORY, do this BEFORE gathering or writing anything new):** every leaf activity/content block already on the page at the start of this run predates the run, so it is human-authored by definition. Append ` #manual-entry` to each such block via `updateBlock` (skip if already tagged). This classifies manual entries by TIMING (they pre-exist this run), not by absence of a marker — so it is immune to the skill's own marker bugs. Exclude page-property blocks (e.g. the `last_journaled::` block) and pure section headings (`## ...`); tag only leaf activity/content blocks. When editing a block whose content contains a LOGBOOK/CLOCK drawer or other control characters, append the tag to the first line only and preserve the rest of the content verbatim.
+   - **If `last_journaled` is None:** First run of the day. Proceed with full gather.
+   - **If `last_journaled` exists:** Delta mode. Filter all sources to only return data AFTER that timestamp.
+4. **Gather data from sources (with delta filtering).**
+   - Query EVERY source — no exceptions, no skipping based on day-of-week.
+   - **Delta mode filters:**
+     - Claude Code scanner: `if local_dt > last_journaled` in Python filter
+     - Slack: `from:<@ID> after:YYYY-MM-DDTHH:MM` (where HH:MM comes from `last_journaled`)
+     - Granola: `ListMeetings(custom_start=today)` → compare UUIDs against Datalog results → only `GetMeetings` on new UUIDs
+     - DMs: filter by `modified_date > last_journaled`
+     - DevRev objects: `modified_date > last_journaled` in SQL WHERE clause
+   - **First run (no marker):** Gather the full day as normal.
+5. **Fingerprint dedup — classify gathered items.**
+   - Extract fingerprint from each gathered item using `extract_fingerprint()`.
+   - Run `check_fingerprints_exist()` — one Datalog batch query for all fingerprints.
+   - Python set subtraction:
+     - `existing_in_graph` = fingerprints returned by Datalog (already captured on entity pages)
+     - `on_journal_already` = `journal_fingerprints` from step 3
+     - `truly_new` = gathered items whose fingerprint is in neither set
+     - `already_captured` = everything else → discard silently
+   - **If nothing is truly new:** Tell user "Nothing new since last run." STOP.
+6. **Three-way decision for truly new items.**
+   - For each item in `truly_new`, check if it's topically related to an existing entry (case 3):
+     - Use targeted Datalog to fetch today's entries on the target entity page.
+     - Signals: same people, same subject, within ~30 min, same conversation thread.
+     - If related → mark as sub-block (`item.merge_target = existing_entry_uuid`).
+     - If not → standalone new entry.
+7. **Brief status** — one line: `Gathered: X new entries (Y discarded as already captured). Delta since HH:MM.`
+8. **Correlate across sources** — merge related new activity into single entries (existing lumping logic).
+9. **🚦 USER GATE — Show proposed groupings and WAIT for approval.**
    - Present the lumped plan as a concise outline: section headings, entry summaries (one line each), and sub-blocks (indented). Include timestamps and source indicators (⚡, 📄🦀, Slack, etc.) so the user can see what feeds into what.
+   - For case 3 items, clearly indicate: "(adds to existing HH:MM entry on [[Page]])"
    - Ask: "Does this look right? Want to change groupings, add context, or adjust anything before I write it?"
-   - **STOP HERE.** Do NOT proceed to step 8 until the user responds.
+   - **STOP HERE.** Do NOT proceed to step 10 until the user responds.
    - If the user says "looks good" / "go" / "yes" / approves → proceed as-is.
-   - If the user requests changes (split entries, merge differently, add context, rename sections, drop items) → apply their edits to the plan, show the revised version, and ask again. Repeat until approved.
-   - If the user adds narrative context (e.g., "the MongoDB work was actually about fixing the auth bug for PwC") → incorporate that context into the entry description.
-8. **Write entries to journal day page** — grouped by project, sorted chronologically.
-9. **Extract TODOs** — write to `## TODOs` section at end of journal page (see UUID verification below).
-10. **Verify block references (MANDATORY)** — after writing TODOs, run UUID verification.
-11. **Confirm** — brief summary: how many entries written, which project sections, any TODOs. 2-3 lines max.
+   - If the user requests changes → apply, show revised, ask again.
+   - If the user adds narrative context → incorporate.
+10. **Write entries to journal day page** — grouped by project, sorted chronologically.
+    - For case 3 items (sub-blocks of existing entity page entries), include `amend:: <target-block-uuid>` in the entry content. The indexer will use this to merge instead of creating a new entry.
+11. **Extract TODOs** — write to `## TODOs` section at end of journal page (see UUID verification below).
+12. **Update `last_journaled::`** — set to the timestamp of the LATEST activity entry written (not the current clock time).
+13. **Verify block references (MANDATORY)** — after writing TODOs, run UUID verification.
+13a. **Attribution audit (MANDATORY)** — re-read the page tree and confirm EVERY leaf activity/content block is either fingerprinted/marked (`⚡`, `[📄]`, `[🦀]`, or a source fingerprint) OR tagged `#manual-entry`. Any block that is neither is a skill error — a write that lost its marker, NOT a manual entry. Do not auto-tag it as manual. Surface each such block to the user (uuid + first line) and ask how to handle it. See Attribution audit below.
+14. **Confirm** — brief summary: how many entries written, which project sections, any TODOs, and the attribution-audit result (clean, or N blocks flagged). 2-3 lines max.
 
 ### UUID verification (step 10)
 
@@ -492,6 +711,56 @@ Do NOT guess, remember from earlier in the conversation, or construct UUIDs. The
 1. Write ALL activity entries first (steps 8).
 2. Re-read page tree to get the actual UUIDs of all written blocks.
 3. THEN write TODO grounding sub-blocks using UUIDs from that fresh read.
+
+**FORMAT VALIDATION (MANDATORY before writing any grounding sub-block):**
+The ONLY valid grounding format is: `Because [narrative phrase](((36-char-uuid)))`
+- ✅ CORRECT: `Because [Chris demanded a business case](((6a2ceb57-6155-4b00-b529-b385e835eb21)))`
+- ❌ WRONG: `Because [Chris demanded a business case]([[Christopher Kiffe]] called it a failure)`
+- ❌ WRONG: `Because [works.create issue](works.create only accepts team ID)`
+- ❌ WRONG: `Because [phrase](any text that is not a (((uuid))))`
+
+Before calling `insertBlock` with a grounding sub-block, validate that the content matches `r'\[.+\]\(\(\([0-9a-f-]{36}\)\)\)'`. If it doesn't, STOP — you have a bug. Go back and get the real UUID from the page tree.
+
+### Attribution audit (step 13a)
+
+After all writing is done, verify the invariant: every leaf activity/content block on the page is *either* automated (has a fingerprint / `⚡` / `[📄]` / `[🦀]`) *or* human-authored (`#manual-entry`). A block that is NEITHER is a skill error — an automated write whose marker was dropped or malformed. It must NOT be silently treated as manual.
+
+**Procedure:**
+
+1. Re-read the page tree with `getPageBlocksTree`.
+2. Walk leaf activity/content blocks. Skip page-property blocks (`last_journaled::` etc.) and pure section headings (`## ...`).
+3. For each block, classify:
+   - `automated` if `extract_fingerprint(content)` is non-None OR content contains `⚡`, `[📄]`, or `[🦀]`.
+   - `manual` if content contains `#manual-entry`.
+   - else → `UNATTRIBUTED` (error).
+
+```python
+import re
+unattributed = []
+def walk(blocks):
+    for b in blocks:
+        c = b.get('content','')
+        first = c.split(chr(10))[0]
+        is_heading = first.strip().startswith('##')
+        is_prop = '::' in first and not first.strip().startswith('-')
+        is_leaf_activity = not is_heading and not is_prop and first.strip() != ''
+        if is_leaf_activity:
+            automated = (extract_fingerprint(c) is not None) or any(m in c for m in ['⚡','[📄]','[🦀]'])
+            manual = '#manual-entry' in c
+            if not automated and not manual:
+                unattributed.append((b.get('uuid',''), first[:90]))
+        for ch in b.get('children', []):
+            walk([ch])
+walk(data)
+if unattributed:
+    print(f'UNATTRIBUTED: {len(unattributed)} blocks — likely skill errors (lost markers)')
+    for u, f in unattributed:
+        print(f'  {u} | {f}')
+else:
+    print('ATTRIBUTION CLEAN')
+```
+
+**If any block is UNATTRIBUTED:** do NOT auto-tag it `#manual-entry`. Surface it to the user — show the uuid and first line, explain it is an automated entry that lost its marker (or an entry added mid-run), and ask whether to fix the marker or tag it manual. The first-pass tagging in step 3 guarantees genuine human entries were already tagged before any writing began, so a leftover unattributed block is, by elimination, a marker bug — except for a human entry added DURING the run, which is fine to surface for review rather than fail on.
 
 ### Correlation and lumping (BEFORE writing)
 
