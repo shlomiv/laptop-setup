@@ -16,6 +16,15 @@ Transform a flat daily journal page into a rich knowledge graph with entity page
 
 Every meaningful connection in this graph is a block-to-block reference: `[contextual phrase](((block-uuid)))`. Page-level `[[wikilinks]]` are cheap navigation — the real semantic power is pointing to the *specific block* where a fact was established. Claims, enrichments, and cross-references all operate at block granularity.
 
+## Surfacing block locations to the user (MANDATORY)
+
+Whenever you reference a specific Logseq block or page TO THE USER in chat (final report, "I moved this entry here", "this claim", "the block I fixed"), ALWAYS give it as a clickable link through the local redirect server — never a bare `logseq://` URI (the chat UI won't render that as clickable) and never just a raw UUID.
+
+- Block: `[short description](http://localhost:12316/graph/shlomi-kg?block-id=<uuid>)`
+- Page: `[Page Name](http://localhost:12316/graph/shlomi-kg?page=<url-encoded-page-name>)`
+
+The redirect server (port 12316) resolves the real graph name dynamically, so the `shlomi-kg` path segment is just a placeholder — leave it as-is. The `<uuid>` must be a verified full 36-char block UUID from an API response. This is for links shown to the USER — it is distinct from the in-graph `(((uuid)))` block-reference syntax used INSIDE block content (claims, groundings), which stays as `(((uuid)))`.
+
 ## Architecture
 
 ```
@@ -644,6 +653,17 @@ curl -s -X POST "$LOGSEQ_API_URL/api" \
 
 After all TODOs are moved, remove the empty `## TODOs` heading from the journal.
 
+#### Container TODOs (Shlomi's time-keeping convention)
+
+Shlomi often starts a work session by creating a top-level `LATER`/`TODO`/`NOW` block as a CONTAINER — a time-keeping header, usually carrying a `:LOGBOOK:` clock drawer and with real action items nested as children. The container marker is NOT a real action item; it's a session heading. Detect it: a `#manual-entry` block whose marker is `LATER`/`TODO`/`NOW`/`DOING`, that has a `:LOGBOOK:` drawer and/or nested `TODO`/`DONE` children.
+
+Handle a container block like this:
+
+1. **Timestamp it from the LOGBOOK.** Parse the first `CLOCK: [YYYY-MM-DD Day HH:MM:SS]` entry in the `:LOGBOOK:` drawer — that's the session start. Drop the leading container marker (`LATER `/`TODO `/etc.) and prepend `HH:MM — ` so it becomes a normal timed Activity entry. PRESERVE the `:LOGBOOK:` drawer and the `#manual-entry` tag verbatim. (If there is no LOGBOOK, leave it untimed — it sorts last.)
+2. **Route the container to `## Activity`** under the day heading (not `## TODOs`) — it's a logged work session, with its note/`DONE` context kept nested.
+3. **Extract the REAL child TODOs** (the nested `TODO` items) to the entity page's `## TODOs` section, each WITH its own sub-bullets. Add a grounding sub-block to each: `Because [emerged from <session phrase>](((<container-uuid>)))`. Do NOT invent `SCHEDULED:` dates — manual TODOs without dates stay undated until Shlomi schedules them.
+4. **Ignore the container's marker in Phase 5 reconciliation** — never treat the container as an open action item.
+
 #### Final cleanup
 
 After all sections and TODOs have been moved, the journal day page should contain only empty/blank blocks. Remove any remaining blocks:
@@ -1090,6 +1110,8 @@ TODOs have a three-state lifecycle in Logseq:
 | `DONE` | Completed — work is finished or action is no longer needed |
 | `LATER` | Deferred — intentionally postponed |
 
+**Exception — container TODOs:** A `#manual-entry` block whose `LATER`/`TODO` marker is just a time-keeping session header (LOGBOOK drawer, nested child TODOs) is NOT a real action item. Phase 1 converts these to timed `## Activity` entries and lifts their child TODOs into `## TODOs`. Never reconcile or reopen a container as if it were an open task — its marker is meaningless for reconciliation. See "Container TODOs" in Phase 1.
+
 #### The two-step reconciliation pattern
 
 For EVERY open TODO on pages that received activity today:
@@ -1354,7 +1376,19 @@ b. **Determine the page name:** `Meeting/<YYYY-MM-DD> - <Short Title>`
 
 - Examples: `Meeting/2026-06-10 - MongoDB Daily Standup`, `Meeting/2026-06-10 - Mana Integration with Dex`
 
-c. **Create the meeting page** (if it doesn't already exist):
+c. **Fetch the Granola summary FIRST — decide whether a page is even warranted (MANDATORY).**
+
+Before creating any page, call `GetMeetings(meeting_ids=[<UUID>])` for the meeting's Granola UUID and read the `<summary>` field. This is the #1 fix for the recurring "empty meeting page" bug: the skill must SOURCE the summary from Granola, not merely move whatever sub-blocks the journal entry happened to carry.
+
+Three cases:
+
+- **Granola returns a real summary** → create the page (below) and POPULATE `## Summary` from the Granola summary content (one block per bullet/section). This is the normal path.
+- **Granola returns "No summary" (or empty) BUT the journal entry has detail sub-blocks** → create the page and populate `## Summary` from those sub-blocks (the old behavior). The meeting happened; notes came from somewhere other than Granola.
+- **Granola returns "No summary" AND the journal entry has no detail sub-blocks** → DO NOT create a meeting page. The meeting produced no content — a page would be an empty shell. Instead, leave the activity entry as-is on the entity page (keep its `[[Meeting]]` generic link or plain text; do NOT mint a `Meeting/<date> - <title>` page). If a page was created on a prior run and is now a contentless shell, annotate its `## Summary` with `_No Granola summary captured for this meeting (notes empty in source)._` rather than deleting it (preserve referential integrity for any existing backlinks).
+
+**Never create a meeting page whose `## Summary` you cannot fill.** An empty Summary is always either (a) a Granola summary you failed to fetch, or (b) a meeting that shouldn't have a page. Both are bugs — there is no valid "empty Summary" end state.
+
+**Create the meeting page** (only in the first two cases above, if it doesn't already exist):
 
 ```
       # Set page properties on the first (auto-created) block
@@ -1374,7 +1408,7 @@ c. **Create the meeting page** (if it doesn't already exist):
       call_api("logseq.Editor.updateBlock", [tree[0]['uuid'], props])
 ```
 
-d. **Move sub-blocks** (meeting detail bullets) from the entity page entry to the meeting page's `## Summary` section.
+d. **Populate `## Summary`.** Insert the Granola summary as child blocks of the `## Summary` heading — one block per bullet or section, preserving wikilinks for people/entities mentioned. If the Granola summary was unavailable but the journal entry carried detail sub-blocks, MOVE those sub-blocks into `## Summary` instead (the original behavior). Either way, `## Summary` must end up non-empty for any page that exists.
 
 e. **Replace the entity page entry** with a compact one-liner:
 
@@ -1406,11 +1440,23 @@ Each entity page gets its OWN summary phrase (focused on what's relevant to that
 
 All participants in the `participants::` property MUST use the full wikilink path (`[[People/Name]]` for internal, `[[Customer/<Account>/People/Name]]` for external). Map participant names from Granola to the person registry. For unknown external people, use `[[Customer/<Account>/People/Name]]` — Logseq will auto-create the page on first backlink query.
 
+#### Deduplication by Granola UUID (MANDATORY)
+
+Before creating a page, check whether ANY existing `Meeting/` page already has the same `document_id=<UUID>` in its `source::` property (Datalog: search for the UUID substring across pages). One Granola doc = ONE meeting page. If a page for that UUID already exists:
+
+- Do NOT create a second page (even if the title differs — the SDA-alignment pair "... with Chris" vs "... debrief" came from the same doc `69886868` and should have been one page).
+- Reuse the existing page; merge any missing metadata (`participants::`, `end::`, `entities::`) onto it.
+- Point the activity one-liner at the existing canonical page.
+
+If a duplicate pair already exists in the graph, pick the better-named/more-complete page as canonical, consolidate metadata onto it, add `duplicate_of:: [[<canonical>]]` to the other, and leave the duplicate as a stub (do not delete — preserve referential integrity).
+
 #### Idempotency
 
 - If a `Meeting/` page already exists for the same meeting, do NOT recreate it. Check by matching the Granola UUID in the `source::` property.
 
 - If the entity page entry already contains `[[Meeting/...]]`, it was already processed — skip.
+
+- **Empty-summary repair (runs every pass):** for each `Meeting/` page touched or referenced today, if its `## Summary` is empty, attempt to fill it: re-fetch the Granola summary via `GetMeetings` using the `source::` UUID and populate. If Granola still returns "No summary", annotate with `_No Granola summary captured for this meeting (notes empty in source)._` so the empty state is explained, never silent. This back-fills pages left empty by older runs.
 
 ### Phase 7: Issue Linking
 
