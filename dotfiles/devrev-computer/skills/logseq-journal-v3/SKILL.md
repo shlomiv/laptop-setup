@@ -18,6 +18,15 @@ trigger: >
 
 Write a flat, chronological daily journal page. This skill gathers data and writes to the journal day page only. Entity page routing, link enrichment, and claims are handled by `logseq-graph-index-v3` as a separate pass.
 
+## Surfacing block locations to the user (MANDATORY)
+
+Whenever you reference a specific Logseq block or page TO THE USER in chat (e.g. "I wrote this entry", "this TODO", "here's the block I changed"), ALWAYS give it as a clickable link through the local redirect server — never a bare `logseq://` URI (the chat UI won't render that as clickable) and never just a raw UUID.
+
+- Block: `[short description](http://localhost:12316/graph/shlomi-kg?block-id=<uuid>)`
+- Page: `[Page Name](http://localhost:12316/graph/shlomi-kg?page=<url-encoded-page-name>)`
+
+The redirect server (port 12316) resolves the real graph name dynamically, so the `shlomi-kg` path segment is just a placeholder — leave it as-is. The `<uuid>` must be a verified full 36-char block UUID from an API response. This applies to every block/page you mention to the user, in any run report or confirmation.
+
 ## Connection
 
 ```bash
@@ -96,6 +105,12 @@ Page name: `"Jun 11th, 2026"` (ordinal suffix: 1st, 2nd, 3rd, 4th-20th, 21st, 22
    - `#meeting` — meetings
 
 6. **Supporting details** — indent under the timestamp line. Keep terse.
+
+6a. **Outcome fidelity — no intent embellishment (MANDATORY).** State only what the source states. The outcome description must be faithful to the source message/transcript/object — do not editorialize motive, emotion, or causality the source doesn't assert.
+   - **Banned unless the source explicitly says so:** intent/manner words like "accidentally", "mistakenly", "by mistake", "deliberately", "on purpose", "finally", "frustrated", "reluctantly", "happily". A Slack line saying "this is not correct" describes an unwanted *outcome* — it does NOT license "accidentally did X".
+   - **Don't relocate causality.** What was unwanted ≠ what was done. "Created a sprint and it swept all issues in; flagged as wrong" is faithful; "accidentally created a sprint" is not — it mischaracterizes both the intent (creating it was deliberate) and the locus of the problem (the issue-sweep, not the creation).
+   - **Prefer verifiable, object-grounded actions over narrated intent.** When a DevRev object backs the activity (a created sprint/issue/vista/meeting), describe the concrete action and link the object: `Set up the Mongo FDE sprint board <vista-15102>` beats `accidentally created a sprint`. Objects are unfalsifiable; intent adjectives are guesses.
+   - **Test before writing:** "Could I point to a specific phrase in the source that states this?" If the claim is an inference about *why* or *how-the-person-felt*, drop it or hedge to what's observable.
 
 7. **Attribution markers** (source signal, no `#Computer` tag needed):
    - `⚡` at end of entry line — from DMs, Slack, meetings, DevRev objects
@@ -305,7 +320,7 @@ def update_last_journaled(page_name, timestamp_str, token):
 | Source | Full-day query | Delta query (when `last_journaled` exists) |
 |---|---|---|
 | Claude Code | Scanner with `today = '<TARGET_DATE>'` | Add filter: `if local_dt > last_journaled` after timestamp parse |
-| Slack | `from:<@ID> on:YYYY-MM-DD` | `from:<@ID> after:YYYY-MM-DDTHH:MM` |
+| Slack | `from:<@ID> on:YYYY-MM-DD` + `to:<@ID>`, then expand every hit's thread via `SlackReadThread` (see §4) | `from:<@ID> after:YYYY-MM-DDTHH:MM` + `to:<@ID>`, then thread-expand hits |
 | Granola | `ListMeetings(custom_start=today)` → `GetMeetings` all | Same `ListMeetings` → Datalog UUID check → `GetMeetings` only new |
 | DMs | `start_date=today, end_date=today` | Same query, filter results by `modified_date > last_journaled` |
 | DevRev SQL | `modified_date >= today` | `modified_date > TIMESTAMPTZ '<last_journaled>'` |
@@ -493,6 +508,22 @@ Only journal meetings that actually happened (have a summary). Focus on Shlomi's
 SlackSearchPublicAndPrivate(query="from:<@SLACK_USER_ID> on:YYYY-MM-DD", include_context=true, limit=20)
 SlackSearchPublicAndPrivate(query="to:<@SLACK_USER_ID> on:YYYY-MM-DD", include_context=true, limit=20)
 ```
+
+**⚠️ Thread expansion (MANDATORY) — participation is enough to capture the whole thread.**
+
+The `from:`/`to:` searches only return messages Shlomi *authored* or that were *addressed directly to him*. They systematically MISS conversations where Shlomi participated but someone else drove the discussion — group DMs and threads started by another person, where Shlomi's contribution is a few threaded replies and the substance lives in *other people's* messages. The author/recipient filters never touch those other messages, so the conversation gets captured as disconnected one-liners or missed entirely.
+
+**Rule: if Shlomi appears anywhere in a thread, the ENTIRE thread is in scope.** His presence — as parent author, replier, or recipient — is sufficient to journal the whole conversation, regardless of who wrote the individual messages.
+
+Procedure, after the two searches above:
+
+1. **Collect thread anchors** from every search hit. For each result, note its `Channel ID` and the thread's parent `Message_ts` — use `thread_ts` if the hit is a reply, otherwise the hit's own `Message_ts`. A hit is part of a thread if it has a `thread_ts`, a non-zero `Reply count`, or sits in a multi-party DM / group DM.
+2. **Deduplicate anchors** by `(channel_id, parent_ts)` so each thread is read once.
+3. **Read each full thread** with `SlackReadThread(channel_id=<CHANNEL_ID>, message_ts=<PARENT_TS>)`. This returns the parent plus all replies, including messages by people other than Shlomi.
+4. **Journal from the full thread, not just Shlomi's lines.** Summarize what the conversation accomplished — decisions, blockers, hand-offs, commitments — drawing on every participant's messages. Still frame the entry around Shlomi's INTENT/contribution (per the outcome-fidelity rules), but use the others' messages for the substance and context.
+5. **Fingerprint stays the thread parent permalink** (`archives/<CHANNEL_ID>/p<PARENT_TS>`) so re-runs dedup correctly and the whole thread maps to one entry.
+
+Skip expansion only for standalone, reply-less messages (no `thread_ts`, zero replies, not in a group DM) — those are fully captured by the original search hit.
 
 **Cross-source merging:** Slack messages often relate to meetings, Claude Code sessions, or DMs. During the correlation step (step 5 in Workflow), merge related Slack messages as sub-blocks under the primary entry from another source. Only create standalone Slack entries for genuinely independent interactions that don't relate to any other source.
 
