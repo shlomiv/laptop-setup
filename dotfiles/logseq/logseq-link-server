@@ -16,9 +16,50 @@ import http.server
 import json
 import subprocess
 import sys
+import threading
 import time
 import urllib.parse
 import urllib.request
+
+
+def _focus_logseq():
+    """Bring Logseq to the foreground and follow to its Space.
+
+    Uses `open -a Logseq` (LaunchServices) rather than an AppleScript
+    `activate`. IMPORTANT: this server runs under launchd (see the
+    com.shlomi.logseq-link-server LaunchAgent), and launchd-spawned
+    processes cannot send Apple Events without Automation (TCC) permission
+    — so `osascript ... activate` silently fails here. `open` goes through
+    LaunchServices, needs no Automation grant, and works from launchd.
+
+    Fired from a background thread after a delay so the logseq:// protocol
+    handler finishes its OWN activation (it activates Logseq to navigate)
+    before our `open -a` lands — otherwise the two race and macOS can settle
+    back on the original Space.
+
+    TUNING RULE (the only knob that matters): ONLY INCREASING THE DELAY
+    helps. Swapping the command (e.g. to `osascript activate`) does NOT —
+    that primitive does not switch Spaces at all (confirmed twice). 250ms
+    was verified reliable; 100ms (current) is the tuned-down value. If
+    space-switching regresses to "occasional," the fix is to RAISE this
+    delay — nothing else.
+
+    Full diagnosis / history in DM:
+    https://app.devrev.ai/devrev/computer/dm?chatId=don%3Acore%3Advrv-us-1%3Adevo%2F0%3Adm%2FrKtD9GXT
+
+    NOTE: macOS only follows the app to its Space when the Mission Control
+    setting "When switching to an application, switch to a Space with open
+    windows for the application" is ON (Dock pref `workspaces-auto-swoosh`).
+    Verified ON here (lone `open -a` from terminal switches Space reliably),
+    so it's not the usual suspect.
+    """
+    def run():
+        time.sleep(0.10)
+        subprocess.Popen(
+            ["open", "-a", "Logseq"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+    threading.Thread(target=run, daemon=True).start()
 
 PORT = 12316
 LOGSEQ_API = "http://localhost:12315/api"
@@ -78,18 +119,14 @@ class RedirectHandler(http.server.BaseHTTPRequestHandler):
         logseq_uri = f"logseq://graph/{graph_name}?{query}" if query else f"logseq://graph/{graph_name}"
 
         # 302 redirect to trigger the protocol handler and navigate Logseq
-        # to the block. Then use `open -a` to force Logseq to the foreground
-        # (which switches spaces on macOS).
+        # to the block.
         self.send_response(302)
         self.send_header("Location", logseq_uri)
         self.end_headers()
 
-        # Force Logseq to front immediately — the 302 and open race, but
-        # open -a just activates the already-running app window.
-        subprocess.Popen(
-            ["open", "-a", "Logseq"],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-        )
+        # Then bring Logseq to the front and follow to its Space via a
+        # delayed AppleScript activate (background thread, non-blocking).
+        _focus_logseq()
 
     def do_HEAD(self):
         # Some clients probe with HEAD; just return 200

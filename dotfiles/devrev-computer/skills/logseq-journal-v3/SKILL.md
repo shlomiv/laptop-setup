@@ -581,16 +581,47 @@ Actively look for open action items across all sources:
 **TODO format:**
 ```
 ## TODOs
-  TODO Description ([[relevant-page]]) ⚡
+  TODO <self-contained action> ([[relevant-page]]) ⚡
   SCHEDULED: <YYYY-MM-DD DAY>
     Because [narrative phrase](((activity-block-uuid))) — brief context.
 ```
+
+**Title rule (MANDATORY) — the title must stand on its own.** A reader scanning the todo list should know exactly what to do WITHOUT opening the grounding. The grounding adds *why* and provenance; it must never be required to recover *what*.
+
+- **State the action AND its object.** Not "Check with Joe", "Follow up on it", "Ask them", "Sort this out" — those force the reader to guess. Say what is being checked/done and about what: "Validate the reframed 'one front door' plan with [[Joseph Flick]] and [[Thomas Hill]], then escalate to [[Michael Stover]]."
+- **No bare pronouns or dangling references** ("it", "this", "them", "that thing") — name the actual subject.
+- **Wikilink every person and entity in the title**, same standard as activity entries: `[[Full Name]]` (resolve first names to the full person page — "Joe" → `[[Joseph Flick]]`), `[[Customer/X]]`, `[[product]]`. Bare names in a title are a bug.
+- **Tag the primary entity** with `([[Page]])` as before.
+- Test before writing: "If this title were the ONLY thing I saw — no grounding, no context — would I know what to do and who's involved?" If no, rewrite.
 
 **Grounding rule (MANDATORY):** Every TODO MUST contain a `[narrative phrase](((uuid)))` block reference pointing to the specific activity entry that spawned it. This is what makes the TODO traceable — you can click through to see exactly where the commitment was made or the need emerged.
 
 - The `(((uuid)))` references the activity block on the journal page (before indexer moves it). Since `moveBlock` preserves UUIDs, the reference will still work after indexing routes the activity to its entity page.
 - The narrative phrase should read naturally: `Because [prereqs need testing on a fresh org](((uuid)))` or `Because [Amar promised tonight/tomorrow](((uuid)))`.
 - If the TODO comes from a Slack message or DM, reference the journal entry that captured it (not the Slack message itself — there's no block for that).
+
+**Write the reason, don't interpolate it (MANDATORY — this is why a model writes the grounding, not a template).** Keep the `Because ` opener — it frames the bullet as a reason, which is good. The shape is:
+
+`Because [<contextual prose summary of the source activity>](((uuid))) — <what it means for THIS todo>.`
+
+Two things make it real reasoning rather than a mad-lib:
+
+1. **The linked phrase is a PROSE SUMMARY OF THE ACTIVITY, not a name or a bare title.** Anchor the `[...](((uuid)))` link on a short description of *what happened* in that source block — e.g. `[reframing the MongoDB goal with Amar to "one front door"]`, NOT `[Amar]` or `[set with Amar]` or `[MongoDB plan work]`. The link text alone should tell the reader what the source was about.
+2. **The tail (after —) is the specific why for this todo** — the need, constraint, commitment, or dependency that this action addresses.
+
+**Connect multiple signals when they exist (strengthens the todo).** A todo is often driven by more than one signal — the activity that spawned it PLUS a related meeting, Slack thread, issue, prior commitment, or downstream dependency. When real connections exist, link them all: weave 2-4 `[summary](((uuid)))` references into the reason so the grounding shows the full web of context, not a single backlink.
+
+- Shape with multiple signals: `Because [activity A summary](((uuidA))) <connecting clause> [signal B summary](((uuidB))) — <why this todo follows from them together>.` The connecting clause states the RELATIONSHIP (e.g. "needs to answer", "which feeds", "and now blocks", "that lands in front of") — not just "and ... and ...".
+- ✅ Connected example: `Because [reframing the MongoDB goal with Amar to "one front door"](((uuidA))) needs to answer [Chris's demand for one business case with dollar values](((uuidB))) — and that only holds if it covers every IT request type, so we need the full request taxonomy.`
+- **Guards (don't over-link into noise):** only connect signals that GENUINELY bear on the todo — same thread of work, cause, or dependency. Each link must actually support what its phrase claims (same provenance discipline as everywhere else). Cap at the 2-4 signals that matter; don't dump every topically-adjacent block. A single strong signal beats three weak ones.
+
+- **The #1 failure to avoid:** several todos that share one origin block all getting the SAME stem ("Because [emerged from X](((uuid))) — ...") with only the tail swapped. If multiple todos come from one source, vary BOTH parts: each link phrase can highlight a different facet of the source activity, and each tail gives a distinct why. Connecting a second, distinct signal per todo is often the cleanest way to differentiate them.
+- **Test before writing:** "Does the link phrase summarize the activity (not just name a person/title)? Does the tail say something the todo title doesn't?" If either fails, rewrite.
+- ✅ Good (3 todos, one origin, distinct framing of both link + tail):
+  - `Because [reframing the MongoDB goal with Amar to "give every employee one front door"](((uuid))) — that promise only holds if it spans every IT request type, so we need the full request taxonomy, not just the MANA slice.`
+  - `Because [the Amar session reshaped the plan into a customer-framed "one front door" pitch](((uuid))) — validate that direction with Joe and Thomas, who own delivery detail, before escalating to [[Michael Stover]].`
+  - `Because [the reworked MongoDB plan now leads with a value/deflection story](((uuid))) — it needs a concrete proof point, so onboard Livs to test deflection.`
+- ❌ Bad (template-stamped — same stem, link anchored on a name/title): `Because [emerged from MongoDB plan work with Amar](((uuid))) — need IT taxonomy.` / `Because [emerged from MongoDB plan work with Amar](((uuid))) — onboard Livs.` / `Because [emerged from MongoDB plan work with Amar](((uuid))) — check with Joe.`
 
 **Rules:**
 - Only Shlomi's items. Helping != owning.

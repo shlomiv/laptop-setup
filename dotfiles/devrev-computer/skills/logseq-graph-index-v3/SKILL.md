@@ -1129,6 +1129,10 @@ If related → add the new information as narrative. Either:
 - **New sub-block:** `Update: [narrative phrase](((activity-block-uuid))) — what this means`
 - **Rewrite existing context sub-block** to incorporate the new info (if it makes the story cleaner than accumulating sub-blocks)
 
+**Write the reason, don't interpolate it.** Keep the `Because ` opener (it frames the bullet as a reason). The shape is `Because [<prose summary of the source activity>](((uuid))) — <what it means for this todo>`. Two rules make it real reasoning, not a mad-lib: (1) anchor the link on a SHORT PROSE SUMMARY OF WHAT HAPPENED in the source block — not a person's name or a bare title (`[reframing the goal with Amar to "one front door"]`, not `[Amar]`); (2) the tail after — gives the specific why this todo follows. If several todos/claims trace to one source, vary BOTH the link phrase (different facet of the activity) and the tail — never the same stem with a swapped tail. Test: "does the link phrase describe the activity, and does the tail add over the todo text?" If not, rewrite. (Phase 11b Check 3 flags template-stamped groundings — sibling blocks sharing an identical stem — for rewrite.)
+
+**Connect multiple signals when they exist.** When a todo (or claim) is driven by more than one signal — the spawning activity PLUS a related meeting/Slack thread/issue/dependency — link them all: weave 2-4 `[summary](((uuid)))` references into the reason with a connecting clause that states the RELATIONSHIP between them ("needs to answer", "which feeds", "now blocks", "lands in front of"). This strengthens the grounding and gives real context. Same shape applies to updates/resolutions/claims, which are inherently multi-signal. Guards: connect only genuinely-related signals (same work thread/cause/dependency), each link must support its phrase (provenance discipline), cap at 2-4. A single strong signal beats three weak ones.
+
 **Step 2: REASSESS — Given all info (old + new), what does this TODO mean to the user now?**
 
 Ask: "What is the NEXT ACTION for Shlomi specifically?" The answer determines the outcome:
@@ -1142,12 +1146,41 @@ Ask: "What is the NEXT ACTION for Shlomi specifically?" The answer determines th
 | New info but same action, same owner | Leave as `TODO`, just richer context now |
 | Partially done, remainder still on Shlomi | Update the TODO text to reflect what's LEFT (not what was originally asked) |
 
+**Step 2b: RE-EVALUATE THE SCHEDULE (MANDATORY whenever you absorbed an update).**
+
+Absorbing new info is not complete until you reassess the `SCHEDULED:` date. A todo that stays open MUST carry a date that reflects the *realistic next action*, not a stale original date. The #1 recurring failure is leaving a todo showing as "overdue" after an update that actually pushed the next checkpoint out.
+
+For every open todo you touched in Step 1, ask: "Given the new info, when is the next real moment Shlomi can or should act on this?" Then:
+
+- **Update shifted the next action later** (e.g., now gated on someone else's work, a dependency, or a scheduled follow-up) → move `SCHEDULED:` to that later date. If it's now co-dependent on another todo/event with a known date, **co-time it** to that date. A todo that was overdue should NOT remain overdue when the update implies a future checkpoint.
+- **Update confirmed it's still actionable now / nothing changed the timing** → keep the date (or, if genuinely overdue and still on Shlomi, leave it overdue — overdue is correct only when no new info moved the checkpoint).
+- **Update made it actionable sooner / more urgent** → pull the date in (next business day for urgent/blocking).
+- **No `SCHEDULED:` exists but the update implies a checkpoint** → add one.
+
+Always state the reschedule in the absorbed-update narrative or a short note (e.g., "rescheduled to Jun 18, co-timed with the Craig PR #26 check-in") so the date change is traceable, not silent. When the right date is genuinely ambiguous (multiple plausible checkpoints, high-stakes), ask the user rather than guessing.
+
+#### Convergent todos — one outcome, delivered by someone else (MANDATORY check)
+
+Two OPEN todos can converge on a **single outcome that another person is now delivering** — even when they live on different pages and are worded differently (so Phase 4's same-page fuzzy dedup won't catch them). Collapse them.
+
+**Signal:** todo A is "get / find out / confirm / get-answer-on X" and todo B is "check in with / follow up with [person] who is now producing X." If that person's deliverable will answer A, then A is no longer a separate action for Shlomi.
+
+**Discriminator (do NOT over-merge):** only collapse when the SAME outcome is owned by SOMEONE ELSE now. If both actions are still independently Shlomi's to do, leave them as two. This is distinct from Phase 4 dedup (accidental duplicate wording of the same intent) — here they are two genuinely different asks that happen to converge on one external deliverable.
+
+**Action when collapsing:**
+- **Close the redundant todo** (the one framed around the bare OUTCOME — "get answer about X"): `DONE` + `closed::` + a `Resolved:` narrative that points to the surviving todo via `(((uuid)))` — e.g. "folded into [check-in with [[Person]]](((uuid))) — [Person] is producing X, so this is no longer a separate item for Shlomi to chase."
+- **Keep the todo framed around the PERSON/CHECKPOINT** (the actionable "check in with X"). Update its context to explicitly ABSORB the question, back-referencing the closed todo's `(((uuid)))` so nothing is lost.
+- Net result: one open item (the check-in), not two.
+
+This is the third member of the supersession family: *ownership shifted* (close + open successor), *same action still yours* (keep + reschedule), and *convergent on someone else's deliverable* (close the outcome-todo, fold into the person-todo).
+
 #### When to ask the user vs. just do it
 
 **Just do it (trivial — don't bother the user):**
 - Work is clearly done (activity says "deployed", "merged", "sent", "completed")
 - Ownership clearly shifted (activity says "assigned to X", "X is handling this", "created issue for Y")
 - Simple context addition (meeting confirmed a date, someone shared info)
+- Two open todos clearly converge on one outcome another person is delivering (close the outcome-todo, fold into the person-todo)
 
 **Ask the user (ambiguous — judgment call):**
 - Could be closed OR could need follow-up (e.g., "discussed with team" — is it done or does someone need to act?)
@@ -1626,7 +1659,19 @@ The pattern: dates get their OWN labeled page link — `[narrative text]([[Day]]
 
 #### Process
 
-1. **Use block content already in context from Phase 1/3.** You moved and sorted these blocks — you already know their UUIDs and content. Do NOT re-read entity pages. Only re-read a specific block if you need to verify it wasn't modified by Phase 6 or 7 (i.e., meeting entries that were compacted, or blocks that got issue links appended).
+1. **Re-read today's-modified blocks FROM THE GRAPH — do NOT enrich from memory (MANDATORY).** Enrichment must operate on the *actual current text* of every block written today, not the agent's recollection of what it wrote in earlier phases. Blocks written late (Phase 5 reconciliation sub-blocks, reconciled/rewritten todo titles, resolution narratives, claims) are exactly the ones the agent's memory drops — and exactly where enrichment has been missing (e.g. bare "Joe"/"Thomas" in a todo title that the rule already covered but the pass skipped). Run ONE Datalog query for all blocks on today's touched pages modified today, and enrich THAT set:
+
+```clojure
+[:find (pull ?b [:block/uuid :block/content])
+ :in $ [?page-name ...] ?today
+ :where
+ [?b :block/page ?p]
+ [?p :block/name ?page-name]
+ [?b :block/updated-at ?u]   ;; or filter by today's [[Day]] heading / modified marker available in your graph
+ ;; keep blocks touched this run; fall back to "all blocks under today's [[Day]] heading + the ## TODOs section" if updated-at is unavailable
+ ]
+```
+   If `updated-at` filtering isn't reliable, enumerate concretely: every block under today's `[[Day]]` heading on each touched page, PLUS every block in those pages' `## TODOs` and `## Claims` sections that references a today block. The point is: read the real blocks, don't trust memory.
 
 2. **Enrichment scope: ALL blocks written or modified today** — not just activity entries. This includes:
    - Activity blocks moved in Phase 1
@@ -2096,8 +2141,9 @@ Before any write operation:
 12. Phase 9: Claims (reconcile existing claims against new activity) — SKIP only if no activity relates to any existing claim
 13. Phase 10: Graph Hygiene (detect attribute placeholder pages, mark exclude-from-graph-view) — SKIP if <5 pages
 14. Phase 11: UUID Verification (MANDATORY — verify ALL (((uuid))) block references resolve correctly)
-15. Update `last_indexed::` on journal page (set to latest moved entry timestamp)
-16. Final report (only phases that did work)
+15. Phase 11b: Reconciliation Audit (MANDATORY — catch stale SCHEDULED dates after updates + unenriched person/issue mentions in Phase-5 blocks)
+16. Update `last_indexed::` on journal page (set to latest moved entry timestamp)
+17. Final report (only phases that did work)
 ```
 
 ### Phase 11: UUID Verification (MANDATORY — never skip)
@@ -2197,6 +2243,47 @@ def verify_refs_on_page(page_name):
 6. Re-verify after fixes.
 
 **Key insight:** `moveBlock` preserves UUIDs, but `removeBlock` + re-creation does NOT. Phase 6's pattern of "replace entry with one-liner and remove children" is the #1 source of orphaned refs. The fix is to ensure grounding references point to blocks that survive the full indexing pipeline.
+
+### Phase 11b: Reconciliation Audit (MANDATORY — never skip)
+
+**Why this exists:** Phase 5 reconciliation and any hand-written TODO updates can leave two kinds of residue that the earlier phases don't re-check: (1) a todo that absorbed a same-day update but kept a STALE `SCHEDULED:` date (still shows overdue when the update pushed the checkpoint out), and (2) reconciliation/update sub-blocks where person names or DevRev issue/PR IDs were left as plain text instead of being wikilinked/linked (Phase 8 enrichment ran before, or skipped, these manually-written blocks). Both were observed in live runs (the `works.create` todo: left overdue after an update, with "Craig" and "PR #26" un-linked). This pass catches them.
+
+**Scope:** every open `TODO` on a page touched today, plus every sub-block written/modified during Phase 5 (absorbed-update notes, resolution narratives, follow-up context).
+
+**Check 1 — Stale schedule after an update.** For each open todo that has an `Update:` (or other same-day reconciliation) sub-block, verify Step 2b actually ran:
+- If the todo has a `SCHEDULED:` date BEFORE today (overdue) AND it carries a same-day update sub-block → this is a red flag. Re-read the update: does it imply a later checkpoint (gated on another's work, a dependency, a co-timed follow-up)? If yes, the date should have been moved — fix it now (move to the implied checkpoint date; co-time to the related todo/event if applicable) and note the reschedule. Only leave it overdue if the update genuinely confirms it's still actionable now and on Shlomi.
+- Practically: an open todo should not be BOTH "overdue" AND "updated today with new info" unless that combination is deliberate. Treat it as a bug to investigate, not a steady state.
+
+**Check 1b — Convergent todos not collapsed.** Scan all open todos on touched pages: flag any "get / confirm / find out X" outcome-todo when ANOTHER open todo references a person who is delivering X (e.g. a "check in with [person]" todo whose context mentions producing/chasing the same answer). If found, this is the convergent-todos case Phase 5 should have collapsed — close the outcome-todo and fold it into the person-todo (see "Convergent todos" in Phase 5). When the convergence is genuine but non-obvious, surface to the user instead of auto-closing.
+
+**Check 2 — Unenriched mentions in reconciliation blocks.** For each Phase-5-written block, scan for:
+- Bare person names that should be `[[Full Name]]` wikilinks (cross-check against person pages in the graph). E.g. "Craig" → `[[Craig MacGregor]]`.
+- Bare DevRev issue/PR IDs not already inside `[...](...)`: `FDE-\d+`, `ISS-\d+`, `TKT-\d+` → markdown links (alias IDs use `/issue/`, `ISS-`/`TKT-` use `/works/`); bare "PR #\d+" referencing a known repo → link to that PR URL.
+- Fix each via `updateBlock`. This applies the same enrichment standard Phase 8 uses, but specifically re-covers blocks Phase 8 may have written before or skipped.
+
+**Check 4 — Non-self-contained todo titles.** For each open todo touched today, check the title line stands on its own:
+- **Vague action / dangling reference:** flag titles that don't say what to do or about what — e.g. start with "Check with / Follow up / Ask them / Sort out" with no object, or contain bare pronouns ("it", "this", "them") with no named subject. Rewrite using the grounding to recover the real action+object (e.g. "Check with Joe and Thomas, then Michael" → "Validate the reframed 'one front door' plan with [[Joseph Flick]] and [[Thomas Hill]], then escalate to [[Michael Stover]]").
+- **Bare person names in the title:** any person name not inside `[[...]]` → wikilink it (resolve first names to full person pages, "Joe" → `[[Joseph Flick]]`). Same standard Check 2 applies to bodies, applied to titles.
+- Fix via `updateBlock`. The title must convey what + who without opening the grounding (see "Title rule" in journal-v3). When the real action is genuinely unclear from the grounding, surface to the user rather than inventing one.
+
+**Check 3 — Template-stamped groundings.** Collect all grounding/context sub-blocks across the todos touched today. Flag any case where TWO OR MORE share a near-identical opening stem before the em-dash — e.g. multiple blocks all starting `Because [emerged from MongoDB plan work with Amar](((same-uuid))) — ...`. That is interpolation, not reasoning: the source name was stamped in and only the tail was swapped. Rewrite each flagged grounding into a DISTINCT, individually-reasoned why — `Because [prose summary of the activity](((uuid))) — specific why` — anchoring the link on what the activity WAS (not a name/title) and varying both the link phrase and the tail across siblings, per the "Write the reason, don't interpolate it" rule in Phase 5. Detection heuristic: group sub-blocks by their text up to the first `—`; any group with >1 member that also shares the same `(((uuid)))` is a template-stamp cluster → rewrite all members.
+
+```python
+import re
+# Heuristic flag for Check 1: open todo, scheduled before today, has a same-day update child
+def stale_schedule_candidates(open_todos, today_yyyymmdd):
+    flagged = []
+    for t in open_todos:
+        sched = t.get('scheduled')  # int YYYYMMDD or None
+        kids = t.get('children', [])
+        has_update = any(re.search(r'\b(Update:|reconfirmed|now also gates|now gated|shifted)\b', c.get('content',''))
+                         for c in kids)
+        if sched and sched < today_yyyymmdd and has_update:
+            flagged.append(t)  # investigate: should this have been rescheduled?
+    return flagged
+```
+
+When a fix is non-obvious (ambiguous next date, or unclear which person a bare first name maps to), surface it to the user rather than guessing.
 
 ### Phase 12: Update `last_indexed::` marker
 
